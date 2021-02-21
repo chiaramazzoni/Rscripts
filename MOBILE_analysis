@@ -1,0 +1,348 @@
+Simulation library
+MOB.022.Vag	11
+MOB.280.Rec	13
+MOB.021.Rec	14
+MOB.022.Rec	15
+MOB.029.Rec	16
+Full library
+Sample Name	Barcode
+MOB.195.Vag	2
+MOB.280.Vag	3
+MOB.021.Vag	4
+MOB.022.Vag	11
+MOB.029.Vag	5
+MOB.037.Vag	6
+MOB.103.Vag	8
+MOB.175.Vag	24
+MOB.281.Rec	10
+MOB.195.Rec	12
+MOB.280.Rec	13
+MOB.021.Rec	14
+MOB.022.Rec	15
+MOB.029.Rec	16
+MOB.037.Rec	17
+MOB.055.Rec	18
+MOB.103.Rec	19
+Zymo		21
+Ctrl Pool	22
+
+
+
+# This script will create a list of fastq files:
+ - cherry picked by the script: 
+	# $failed_fastq_relevant_barcode
+ - taking the whole non relevant barcode folders:
+	# $passed_fastq_non_relevant_barcode 
+	# $failed_fastq_non_relevant_barcode
+
+for i in barcode*; do echo "$i --> $(ls $i | wc -l)"; done
+
+barcode01 --> 32 *not
+barcode02 --> 447  ---> have to re run guppy since I deleted 2/3
+barcode03 --> 450
+barcode04 --> 457
+barcode05 --> 446
+barcode06 --> 445
+barcode07 --> 47 *not
+barcode08 --> 456
+barcode09 --> 62 *not
+barcode10 --> 448
+barcode11 --> 439
+barcode12 --> 455
+barcode13 --> 424
+barcode14 --> 454
+barcode15 --> 26 **** this was a relevant barcode
+barcode16 --> 457
+barcode17 --> 449
+barcode18 --> 452
+barcode19 --> 454
+barcode20 --> 66 *not
+barcode21 --> 452
+barcode22 --> 460
+barcode23 --> 63 *not
+barcode24 --> 448
+unclassified --> 541
+how many reads from the off target? --> 
+how many reads from the off unclassified? -->
+Total reads --> 2,082,408
+--> working with columns 2,3,4,10,21 having readid,runid,batchid,pass_filtering,barcode_arrangement info --> since fastq files are named: 
+										fastq_runid_xxxxxxxxxx_batchid_0.fastq
+--> since fast5 are
+
+# $failed_fastq_relevant_barcode
+
+rel_barcode=barcode02 barcode03 barcode04 barcode05 barcode06 barcode08 barcode10 barcode11 barcode12 barcode13 barcode14 barcode15 barcode16 barcode17 barcode18 barcode19 barcode21 barcode22 barcode24
+non_rel_barcode=barcode01 barcode07 barcode09 barcode20 barcode23
+
+file=/vol/sci/bio/data/moran.yassour/lab/Projects/MOBILE/16S_ONT/MOBILE_16S_050120/MOBILE_16S_050120/joint_guppy_hac/sequencing_summary.txt
+cat $file | grep -v "barcode01" | grep -v "barcode07" | grep -v "barcode09" | grep -v "barcode20" | grep -v "barcode23" | cut -f 2,3,4,10 | grep "FALSE" > failed_fastq_relevant_barcode.tsv
+
+awk '{printf("fastq_runid_%s_%s_0.fastq\n",$2,$3)}' failed_fastq_relevant_barcode.tsv
+
+# the following picks the read from the fastq file (from read id to the escaped + symbol)
+
+awk '/^\+/{f=0} /^\@b257cf79-4172-41a1-acf4-f2b8a4bbbe1c/{f=1} f' ./barcode03/fastq_runid_d1a860bd12fc59e2bfde29cc3337009459164082_0_0.fastq
+
+# this is th same as above but with + included
+
+awk '$1 == "@b257cf79-4172-41a1-acf4-f2b8a4bbbe1c", $1 == "+"' ./barcode03/fastq_runid_d1a860bd12fc59e2bfde29cc3337009459164082_0_0.fastq 
+
+### all together --->
+# how to pass environment variables to awk --> define inside and don't use $ sign
+
+awk -v path=/vol/sci/bio/data/moran.yassour/lab/Projects/MOBILE/16S_ONT/MOBILE_16S_050120/MOBILE_16S_050120/joint_guppy_hac '{printf("awk '\''/^+/{f=0} /^@%s/{f=1} f'\'' ", $1)}{printf("%s/%s/fastq_runid_%s_%s_0.fastq\n",path,$5,$2,$3)}' failed_fastq_relevant_barcode.tsv
+
+#or# 
+
+awk -v path=/vol/sci/bio/data/moran.yassour/lab/Projects/MOBILE/16S_ONT/MOBILE_16S_050120/MOBILE_16S_050120/joint_guppy_hac '{printf("awk '\''/^+/{f=0} /^@%s/{f=1} f'\'' ", $1) ; printf("%s/%s/fastq_runid_%s_%s_0.fastq\n",path,$5,$2,$3)}' failed_fastq_relevant_barcode.tsv
+
+#or#
+
+awk -v path=/vol/sci/bio/data/moran.yassour/lab/Projects/MOBILE/16S_ONT/MOBILE_16S_050120/MOBILE_16S_050120/joint_guppy_hac '{printf("awk '\''/^+/{f=0} /^@%s/{f=1} f'\'' %s/%s/fastq_runid_%s_%s_0.fastq\n",$1,path,$5,$2,$3)}' failed_fastq_relevant_barcode.tsv
+
+awk -v path=/vol/sci/bio/data/moran.yassour/lab/Projects/MOBILE/16S_ONT/MOBILE_16S_050120/MOBILE_16S_050120/joint_guppy_hac '{printf("awk '\''/^@/{f=0} /^@%s/{f=1} f'\'' %s/%s/fastq_runid_%s_%s_0.fastq\n",$1,path,$5,$2,$3)}' failed_fastq_relevant_barcode.tsv >> failed_fastq_relevant_barcode.fastq
+
+list=`for i in barcode* unclassified;do echo "$(ls $i)"; done; echo "failed_fastq_relevant_barcode.fastq"`
+
+~/Tools/ONT/ont-assemlers/canu-2.1.1/bin/canu -correct -d /vol/sci/bio/data/moran.yassour/lab/Projects/MOBILE/16S_ONT/MOBILE_16S_050120/MOBILE_16S_050120/joint_guppy_hac/canu_correction rawErrorRate=0.2 -p off_uncl_failed -raw -nanopore `echo $list`
+
+~/Tools/ONT/ont-assemlers/canu-2.1.1/bin/canu -correct -d /vol/sci/bio/data/moran.yassour/lab/Projects/MOBILE/16S_ONT/MOBILE_16S_050120/MOBILE_16S_050120/joint_guppy_hac/canu_correction rawErrorRate=0.5 genomeSize=3m -raw -nanopore -p off_uncl_failed unclassified/*fastq offtarget_barcodes/*/*fastq failed_fastq_relevant_barcode.fastq
+
+
+## INVESTIGATION on read length: To filter or not to filter? 
+From canu report (on the subset of to-correct reads) it seems that reads > 1655 bps are on the right side of the distribution (hence potentially outliers, PCR chimeras?)
+Full 16S: 1,550 bp
+awk '$14 > 1655 {print $2,$14,$21}' sequencing_summary.txt | wc -l --> 25,140
+awk '$14 > 1600 && $14 < 1655 {print $2,$14}' sequencing_summary.txt | wc -l --> 801,412
+too much this time, I'll remove just the reads from the first command --> and correct without them
+
+awk '$14 > 1655 {print $21}' sequencing_summary.txt | sort | uniq -c
+x      3 barcode01
+   1205 barcode02
+   1692 barcode03
+    554 barcode04
+   1441 barcode05
+   1272 barcode06
+   1585 barcode08
+x      1 barcode09
+   1348 barcode10
+    406 barcode11
+    630 barcode12
+     15 barcode13
+    896 barcode14
+      1 barcode15
+    701 barcode16
+    852 barcode17
+    319 barcode18
+    589 barcode19
+x      2 barcode20
+   1123 barcode21
+    278 barcode22
+x      1 barcode23
+   1187 barcode24
+   9038 unclassified
+
+Read Correction
+
+The first step in Canu is to find high-error overlaps and generate corrected sequences for subsequent assembly. This is currently the fastest step in Canu. By default, only the longest 40X of data (based on the specified genome size) is used for correction. Typically, some reads are trimmed during correction due to being chimeric or having erroneous sequence, resulting in a loss of 20-25% (30X output). You can force correction to be non-lossy by setting corMinCoverage=0, in which case the corrected reads output will be the same length as the input data, keeping any high-error unsupported bases. Canu will trim these in downstream steps before assembly.
+
+If you have a dataset with uneven coverage or small plasmids, correcting the longest 40X may not give you sufficient coverage of your genome/plasmid. In these cases, you can set corOutCoverage=999, or any value greater than your total input coverage which will correct and assemble all input data, at the expense of runtime.
+--> hence no need of filtering by length before canu correction this will trim the chimeras anyway --> this leads to the next point --> do I want to canu-correct all the reads that are too long to be a full 16S?
+
+- too long -> if chimeras they will not be classified by BLAST, since if the read has hits for 2 different species it is considered unclassified; 
+- unclassified --> not both of the barcodes were identified at the end of the read. This means that they might be chimeras as well
+- off-target --> error rate, correction shoud reduce this
+-failed --> how does canu correct/trims the failed reads?
+
+awk '$14 > 1655 {print $10,$21}' sequencing_summary.txt | sort | uniq -c
+x      3 FALSE barcode01
+     95 FALSE barcode02
+     97 FALSE barcode03
+     92 FALSE barcode04
+     69 FALSE barcode05
+    100 FALSE barcode06
+     81 FALSE barcode08
+x      1 FALSE barcode09
+     65 FALSE barcode10
+    102 FALSE barcode11
+     65 FALSE barcode12
+      1 FALSE barcode13
+     78 FALSE barcode14
+      1 FALSE barcode15
+     55 FALSE barcode16
+     57 FALSE barcode17
+     39 FALSE barcode18
+     59 FALSE barcode19
+x      1 FALSE barcode20
+     91 FALSE barcode21
+     36 FALSE barcode22
+x      1 FALSE barcode23
+    126 FALSE barcode24
+   2959 FALSE unclassified
+
+   1110 TRUE barcode02
+   1595 TRUE barcode03
+    462 TRUE barcode04
+   1372 TRUE barcode05
+   1172 TRUE barcode06
+   1504 TRUE barcode08
+   1283 TRUE barcode10
+    304 TRUE barcode11
+    565 TRUE barcode12
+     14 TRUE barcode13
+    818 TRUE barcode14
+    646 TRUE barcode16
+    795 TRUE barcode17
+    280 TRUE barcode18
+    530 TRUE barcode19
+      1 TRUE barcode20
+   1032 TRUE barcode21
+    242 TRUE barcode22
+   1061 TRUE barcode24
+   6079 TRUE unclassified
+
+
+
+/vol/sci/bio/data/moran.yassour/lab/Tools/ONT/ont-assemlers/canu-2.1.1/bin/canu -correct -p off_uncl_failed -d /vol/sci/bio/data/moran.yassour/lab/Projects/MOBILE/16S_ONT/MOBILE_16S_050120/MOBILE_16S_050120/joint_guppy_hac/canu_correction_999 genomeSize=3m rawErrorRate=0.5 corOutCoverage=999 -raw -nanopore unclassified/*fastq offtarget_barcodes/*/*fastq failed_fastq_relevant_barcode.fastq
+
+###NOTES on canu
+1) setting the parameter corOutCoverage=999 did not increase the number of corrected reads, but the number of trimmed reads, and the distribution of trimmed reads in in a better range of lengths.  
+Canu reports both distributions in prefix.report, and produces the graphs in: 
+/vol/sci/bio/data/moran.yassour/lab/Projects/MOBILE/16S_ONT/MOBILE_16S_050120/MOBILE_16S_050120/joint_guppy_hac/'canu_correction_999/off_uncl_failed.seqStore/readlengths-obt_999.png'
+2) there is the parameter minReadLength=number set to 1000, that filters the reads to be corrected.
+# NOTES from the paper
+- Candidate overlaps are typically found in the first stage by identifying shared k-mers, between all pairs of reads
+- reads are sketched with k-mers
+- within a sketch, k-mers are weithed based on two criteria: 1)the number of occurrences of a k-mer inside a read (the document) and 2) the overall rarity of the k-mer among all reads (the corpus)
+- repetitive k-mers receive low weights
+- by reducing the occurrence of repetitive k-mers within sketches, the number of uninformative, repetitive overlaps that are identified during sketch compariso is reduced
+- Canu uses all-versus-all overlap information to correct individual reads. However, simply computing a consensus representation for each read could result in masking copy-specific repeat variants. Therefore, Canu uses two filtering steps to determine which overlaps should be selected to correct each individual read: 1) a global filter where each read chooses where it will supply correction evidence='The global filter keeps only the C (expected coverage depth) best overlaps for each read and 2) a local filter where each read accepts or rejects the evidence supplied by other reads. 
+
+# figuring out the numbers
+awk 'BEGIN {count=0} /(runid)/ {++count} END {print count}' ./*fastq
+
+## basecall+trimming -> to use in epi2me
+/vol/sci/bio/data/moran.yassour/lab/Tools/Pipelines/ONT_Guppy_runner/guppy_runner -i /vol/sci/bio/data/moran.yassour/lab/Projects/MOBILE/16S_ONT/MOBILE_16S_050120/MOBILE_16S_050120/joint_guppy_hac/fast5 -o /vol/sci/bio/data/moran.yassour/lab/Projects/Projects/MOBILE/16S_ONT/MOBILE_16S_050120/MOBILE_16S_050120/joint_guppy_hac/guppy_hac -c /vol/sci/bio/data/moran.yassour/lab/Tools/ONT/ont-guppy/data/dna_r9.4.1_450bps_hac.cfg --barcode_kits SQK-16S024 -r --qscore_filtering --trim_barcodes
+
+# submitting Blast jobs on epi2me
+/vol/sci/bio/data/moran.yassour/lab/Tools/parallel-20191122/bin/parallel --jobs `ls | grep 'barcode'| wc -l` '/vol/sci/bio/data/moran.yassour/lab/Tools/ONT/DIYscripts/epi2me16S_run.sh {1}' ::: `ls | grep "barcode"`
+
+/vol/sci/bio/data/moran.yassour/lab/.conda/envs/krk2/bin/kraken2-build --build --db /vol/sci/bio/data/moran.yassour/lab/Tools/kraken2_db/Standard_1
+
+## NOTES on EPI2ME classification
+- lca (last_common_ancestor) = 1 when more than one genus is represented by the top three classifications [ In this case taxid is reported at family level and species_id will be..which one ? ] 
+lca = 0 when genus is coherent among the best 3 classifications;
+lca = -1 when the read is unclassified (not just genus to be incoherent) 
+
+# Nanopore + Kraken2 + SILVA (SSU Ref NR 99)
+
+/vol/sci/bio/data/moran.yassour/lab/Tools/parallel-20191122/bin/parallel --jobs `ls | grep 'barcode'| grep -v 'barcode24' | wc -l` --compress 'srun --mem=72g -c25 --time=0-2:59 --job-name=kraken2 /vol/sci/bio/data/moran.yassour/lab/Tools/ONT/DIYscripts/kraken2_16S_run.sh {1}' ::: `ls | grep "barcode" | grep -v 'barcode24'`
+
+loc=/vol/sci/bio/data/moran.yassour/lab/Projects/MOBILE/16S_ONT/MOBILE_16S_050120/MOBILE_16S_050120/joint_guppy_hac/guppy_hac_trim/pass; file_list=`ls ${loc}/barcode15/*.fastq`;for file in ${file_list} ; do name=`basename ${file}` ;/vol/sci/bio/data/moran.yassour/lab/.conda/envs/krk2/bin/kraken2 --db /vol/sci/bio/data/moran.yassour/lab/Tools/kraken2_db/16S_SILVA138_k2db/ --output ${loc}/kraken2/barcode15/${name%.fastq}.out ${file} --unclassified-out ${loc}/kraken2/barcode15/${name%.fastq}.uncl --use-names --confidence 0.8 --threads 5 &> ${loc}/kraken2/barcode15/kraken2.log; done
+
+--> with --confidence 0.8 few classified reads are being returned, since the score is made up like this: it is a fraction of C/Q, where C is the number of k-mers mapped to LCA values in the clade rooted at the label, and Q is the number of k-mers in the sequence that lack an ambiguous nucleotide; the mapping of these k-mers is in the output for each read., we can then analyse how much ambiguity is there. With these results, I assume long read data is not suitable for this kind of scoring system.
+## from 
+On read level, precision and recall for genus and species identification were computed for Centrifuge, Kraken and Kraken 2 vs. the results obtained from the NanoOK analysis, 
+- with precision being the proportion of reads classified correctly over reads classified; 
+- with recall being the proportion of reads classified correctly to the reads from the NanoOK dataset, which was used as “ground truth”. 
+--> classification is mostly on genus level ,but on R we can merge tables on read_id
+
+
+## important ## when running kraken on srun, request 64g of RAM, since the step *classify* is reading the entire hash table --> though it seems to throw an error with any memory request. 
+
+# build bracken database
+bracken-build -d /vol/sci/bio/data/moran.yassour/lab/Tools/kraken2_db/16S_SILVA138_k2db/ -t 20 -k 35 -l 1400 -x /vol/sci/bio/data/moran.yassour/lab/.conda/envs/krk2/bin/
+** 35 is the k-mer size set by default by kraken2 script
+
+# on illumina
+for i in `ls`; do mv $i `echo $i | sed 's/^366181-//g' | sed 's/_S[0-9]*_L001//g' | sed s'/_001//'g`; done
+
+# will do kraken2?
+kraken2  --db /vol/sci/bio/data/moran.yassour/lab/Tools/kraken2_db/16S_SILVA138_k2db  --output 'file' --unclassified-out 'file' --paired seqsR#.fq --report --use-mpa-style --confidence --threads 25
+
+
+2 --> 121,859
+SRR6744125
+/vol/sci/bio/data/moran.yassour/lab/Tools/ONT/DIYscripts/kraken2_16S_run.sh barcode02
+
+from here https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5785224/
+V3 region exhibited a bimodal distribution composed of 2 main peaks of 161 and 186 nt --> avg 175 bps --> range 152.33 – 197.84
+V4 range 281.48 – 284.61
+
+zcat ../Raw/*.gz | /vol/sci/bio/data/moran.yassour/lab/Tools/fastqc --threads 8 --outdir ./
+
+#adapter contamination in 3' end
+MOB-055-Rec_R1
+MOB-103-Rec_R1
+Zymo_R1
+### Trimmomatic (cd in the folder of interest )
+loc=/vol/sci/bio/data/moran.yassour/lab/Projects/MOBILE/16S_Illumina/Pre_processed; for i in `ls /vol/sci/bio/data/moran.yassour/lab/Projects/MOBILE/16S_Illumina/Raw/*R1.fastq`; do name=`basename ${i}`;java -jar /vol/sci/bio/data/moran.yassour/lab/.conda/pkgs/trimmomatic-0.39-1/share/trimmomatic-0.39-1/trimmomatic.jar PE -threads 5 -phred33 -summary ${loc}/${name%_R1.fastq}.summary ${i} ${i%R1.fastq}R2.fastq ${loc}/${name%R1.fastq}R1_trimmed_paired.fastq ${loc}/${name%R1.fastq}R1_trimmed_unpaired.fastq ${loc}/${name%R1.fastq}R2_trimmed_paired.fastq ${loc}/${name%R1.fastq}R2_trimmed_unpaired.fastq ILLUMINACLIP:Adapters.fasta:2:30:15 LEADING:19 TRAILING:19 SLIDINGWINDOW:4:19 MINLEN:145; done
+
+output--> 2385940 reads paired/unpaired 
+
+# join the reads with fastq join
+
+for i in `ls ./*R1_trimmed_paired.fastq`; do /vol/sci/bio/data/moran.yassour/lab/Tools/ea-utils/clipper/fastq-join ${i} ${i%R1_trimmed_paired.fastq}R2_trimmed_paired.fastq -o ${i%R1_trimmed_paired.fastq}u1.fastq -o ${i%R1_trimmed_paired.fastq}u2.fastq -o ${i%R1_trimmed_paired.fastq}joined.fastq >> fastq-join.log; done
+
+
+#BURST, optimized aligner run on the same database that epi2me run on
+loc=/vol/sci/bio/data/moran.yassour/lab/Tools/BURST;
+out=/vol/sci/bio/data/moran.yassour/lab/Projects/MOBILE/16S_Illumina/Pre_processed;
+file_list=`ls ${loc}/Pre_processed/*.fastq | grep -v 'paired'`;
+
+for file in ${file_list} ; do \
+name=`basename ${file}`;
+${loc}/burst_linux_DB12\ 
+--queries ${}/ --accelerator ${loc}/PROK_170704/PROK_170704.acx --references ${loc}/PROK_170704/PROK_170704.edx --mode CAPITALIST --taxonomy ${loc}/PROK_170704/PROK_170704.tax -o ${out}/Burst/${1%.fastq}.output --threads 25
+
+samples=MOB-195-Vag MOB-280-Vag MOB-021-Vag MOB-022-Vag MOB-029-Vag MOB-037-Vag MOB-103-Vag MOB-175-Vag MOB-281-Rec MOB-195-Rec MOB-280-Rec MOB-021-Rec MOB-022-Rec MOB-029-Rec MOB-037-Rec MOB-055-Rec MOB-103-Rec
+
+/vol/sci/bio/data/moran.yassour/lab/Tools/parallel-20191122/bin/parallel --jobs 19 --compress 'srun --mem=8g -c25 --time=0-3:59 --job-name=burst /vol/sci/bio/data/moran.yassour/lab/Tools/ONT/DIYscripts/Burst_16S_run.sh {1}' ::: MOB-195-Vag MOB-280-Vag MOB-021-Vag MOB-022-Vag MOB-029-Vag MOB-037-Vag MOB-103-Vag MOB-175-Vag MOB-281-Rec MOB-195-Rec MOB-280-Rec MOB-021-Rec MOB-022-Rec MOB-029-Rec MOB-037-Rec MOB-055-Rec MOB-103-Rec Control-pool Zymo
+
+# with R2_trimmed_unpaired and u2 trying the reverse complement -fr parameter
+
+# to add a column with the sample name to the BURST files
+awk '$0=$0"\t"FILENAME' *.output
+
+
+# correcting reads (filtered to be > 1000) using only qc-failed-reads (N=) or unclassified reads (N-TRUE=22,920,N-FALSE=67891) ??
+is that valuable?
+SUGGESTIONS!
+- aim is to not correct all the reads.
+1 suggestion)-> sampling the best sub-sample of reads, at least equal in number to the qc-failed reads to correct.  
+
+## preprocessing illumina reads, paired-end, 250 bps
+zcat ../Raw/*.gz | /vol/sci/bio/data/moran.yassour/lab/Tools/FastQC/fastqc stdin --threads 10 --outdir ./
+
+Total reads: 5,301,460
+percentage of failed reads: 45
+%GC: 52
+Threshold for optimal. 28 phredscore
+
+#############################################################
+Approach to the classifications by EPI2ME
+#############################################################
+
+-> there's a long tail of minor taxa that should be considered
+type	less_1% more_1% 
+pool	520	14		
+Rec	2975	116		
+Vag	2212	49		
+Zymo	611	13
+
+On average, minor taxa have worse accuracy or length than the major ones?
+singletons %>% ungroup(sample,Taxon) %>% summarise(accuracy)  --> #median:85.35 #mean: 85.6
+no_singletons %>% ungroup(sample,Taxon) %>% summarise(accuracy) #median:94.05 #avg: 92.8
+
+singletons %>% ungroup(sample,Taxon) %>% summarise(sequence_length_template) #median: 1444.5
+
+## SINGLETONS =  NOT CONSIDERING THE AMBIGUOUS TAXA AT GENUS LEVEL	
+
+#summarise(absolute_singletons = sum(n==1), sample_singletons = sum(n > 1))
+type absolute_singletons just_sample_singletons
+pool		193		0	
+Rec		712		224--> mean of appearences across samples: 2.26
+Vag		536		152--> mean of appearences across samples: 2.29	
+Zymo		228		0		
+
+

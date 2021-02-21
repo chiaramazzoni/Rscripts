@@ -1,0 +1,374 @@
+---
+title: "16S_libmobile_full"
+author: "Chiara Mazz.oni"
+date: "17 gennaio 2021"
+output: html_document
+---
+
+```{r}
+library(rentrez)
+library(dplyr)
+library(stringr)
+library(ggpubr)
+library(tidyr)
+require(pals)
+library(hrbrthemes)
+library(ggnewscale)
+library(scales)
+library(grid)
+library(ggpattern)
+library(ggforce)
+library(purrr)
+library(tibble)
+'%!in%' <- function(x,y)!('%in%'(x,y))
+
+save(sub_hac_call, sub_hac_call_samp_true, abn_epi2me, burst_lastax, abn_burst, file = "~/microBio/ISL_VRF/ONT/16Slibmobile_full/overview_data.RData")
+# To load the data again
+load("~/microBio/ISL_VRF/ONT/16Slibmobile_full/overview_data.RData")
+```
+
+```{r}
+hac_call <- read.delim('~/microBio/ISL_VRF/ONT/16Slibmobile_full/sequencing_summary.txt', sep='\t', header=1)
+
+offtargets <- c("barcode01", "barcode07", "barcode09", "barcode20", "barcode23") #offtargets
+
+sub_hac_call <-hac_call %>% select(read_id,passes_filtering,sequence_length_template,mean_qscore_template,median_template,barcode_arrangement,barcode_score,barcode_front_score,barcode_front_refseq, barcode_front_foundseq, barcode_front_foundseq_length,barcode_rear_score, barcode_rear_refseq, barcode_rear_foundseq, barcode_rear_foundseq_length) 
+#sub_hac_call %>% filter(unclassified)
+sub_hac_call$rel_barcode <- ifelse(as.character(sub_hac_call$barcode_arrangement) %in% offtargets, "offtarget",as.character(sub_hac_call$barcode_arrangement))
+
+sub_hac_call$rel_barcode <- as.character(sub_hac_call$rel_barcode)
+#sub_hac_call$
+
+sub_hac_call_samp <- sub_hac_call %>% mutate(sample=case_when(rel_barcode == 'barcode02' ~ 'MOB-195-Vag', rel_barcode =='barcode03'~'MOB-280-Vag',rel_barcode =='barcode04'~'MOB-021-Vag',rel_barcode =='barcode11'~'MOB-022-Vag',rel_barcode =='barcode05'~'MOB-029-Vag',rel_barcode =='barcode06'~'MOB-037-Vag', rel_barcode == 'barcode08'~'MOB-103-Vag',rel_barcode =='barcode24'~'MOB-175-Vag',rel_barcode =='barcode10'~'MOB-281-Rec',rel_barcode =='barcode12'~'MOB-195-Rec',rel_barcode =='barcode13'~'MOB-280-Rec',rel_barcode =='barcode14'~'MOB-021-Rec',rel_barcode =='barcode15'~'MOB-022-Rec',rel_barcode =='barcode16'~'MOB-029-Rec',rel_barcode =='barcode17'~'MOB-037-Rec',rel_barcode =='barcode18'~'MOB-055-Rec',rel_barcode =='barcode19'~'MOB-103-Rec',rel_barcode =='barcode22'~'Control--pool',rel_barcode =='barcode21' ~'--Zymo',rel_barcode == 'offtarget'~ 'offtarget', rel_barcode == 'unclassified' ~ 'unclassified'))
+
+count_data <- sub_hac_call_samp  %>% group_by(sample) %>% summarize(n=n())
+
+ggplot(sub_hac_call_samp)+
+  geom_bar_pattern(stat='count',
+              aes(x=sample,fill=sample,pattern=passes_filtering), 
+                alpha=0.7, 
+                 position = position_stack(),
+                  color = "black", 
+                   pattern_fill = "black",
+                   pattern_angle = 45,
+                   pattern_density = 0.3,
+                   pattern_spacing = 0.004,
+                   pattern_key_scale_factor = 0.4)+
+  geom_text(data=count_data,aes(x=sample,y=n,label=scales::comma(n)),hjust=-0.1 ,size=5, inherit.aes = F,show.legend = F)+
+  scale_fill_manual(name = "Samples",values=c(alphabet(19),'grey22','blue'))+
+  scale_pattern_manual(name= 'passed_qc',values = c('TRUE' = "none", 'FALSE' = "stripe"))+
+  scale_y_continuous(labels = scales::comma)+
+  coord_flip()+
+  labs(x = "", y = "# reads", title = "", caption = "")+
+  theme_ipsum(base_size=22, plot_margin = margin(10, 20, 10, 10))+
+  theme(axis.title.x = element_text(size = 25),strip.text.x = element_text(size = 30), legend.position = "bottom", panel.spacing = unit(-4, "lines"), axis.text.y = element_text(hjust = 1.8))+ # hjust is not that proper
+  guides(pattern = guide_legend(override.aes = list(fill = "white")),
+         fill = guide_legend(override.aes = list(pattern = "none")))
+ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/barcode_count.png',width=25,height=10, limitsize = FALSE)
+```
+
+
+```{r}
+## encoding of new variables: error_rate and dist_range
+
+sub_hac_call_samp <- sub_hac_call_samp %>% mutate(error_rate = case_when(mean_qscore_template < 7 | mean_qscore_template == 7 ~ '> 20% error rate',mean_qscore_template > 7 & mean_qscore_template < 9 | mean_qscore_template == 9 ~ '13% - 20% error rate', mean_qscore_template > 9 &  mean_qscore_template < 10 | mean_qscore_template == 10 ~ '10% - 13% error rate',mean_qscore_template > 10 ~ '< 10% error rate'))
+
+
+sub_hac_call_samp$error_rate <- as.factor(sub_hac_call_samp$error_rate)
+
+sub_hac_call_samp <- sub_hac_call_samp %>% mutate(error_rate = forcats::fct_relevel(error_rate, '< 10% error rate', '10% - 13% error rate', '> 20% error rate'))
+
+sub_hac_call_samp <- sub_hac_call_samp %>% mutate(dist_range=case_when(sequence_length_template < 1200 | sequence_length_template == 1200 ~ 'left tail', sequence_length_template > 1200 & sequence_length_template < 1700 | sequence_length_template == 1700 ~ 'central body', sequence_length_template > 1700  ~ 'right tail'))
+
+sub_hac_call_samp %>% group_by(dist_range) %>% summarise(c=n())
+
+sub_hac_call_samp$dist_range <- as.factor(sub_hac_call_samp$dist_range)
+
+sub_hac_call_samp <- sub_hac_call_samp %>% mutate(dist_range = forcats::fct_relevel(dist_range, 'left tail','central body', 'right tail'))
+
+sub_hac_call_samp_true <- sub_hac_call_samp %>% filter(passes_filtering == 'TRUE')
+
+##################### TRIALS
+
+sub_hac_call_samp_true %>% summarize(max(sequence_length_template))# true >> 8159 , false >> 137,940	
+
+sub_hac_call_samp_true %>% summarise(max = max(sequence_length_template), min = min(sequence_length_template),median = median(sequence_length_template), std = sd(sequence_length_template)) # true&hac>> 8159
+sub_hac_call_samp %>% summarise(max = max(sequence_length_template), min = min(sequence_length_template),median = median(sequence_length_template), std = sd(sequence_length_template))
+
+sub_hac_call_samp %>% summarise(max(sequence_length_template)) #hac >> 8159 
+sub_hac_call_samp %>% filter(sequence_length_template > 8000)
+
+######################## PLOT: HISTOGRAM with overall distribution of lengths
+
+sub_hac_call_samp %>% ggplot()+
+  geom_bar(aes(x=factor(sequence_length_template),
+               y=..count.., #(..count..)/sum(..count..)
+               fill=sample,
+               alpha=error_rate))+
+  scale_x_discrete(breaks = seq(0, 8160,by=500))+
+  scale_fill_manual(name = "samples",values=c(alphabet(19),'grey22','blue'))+
+  scale_alpha_manual("error rate", values=c('> 20% error rate' = 0.2,'13% - 20% error rate' = 0.5, '10% - 13% error rate' = 0.8, '< 10% error rate' = 1))+
+  theme_ipsum(base_size=20, axis_title_size =20)+
+  labs(title='hac & mean quality score > 7',x='read_length')+
+  theme(panel.grid = element_blank(), panel.background = element_rect(fill = "white", colour = "white"),axis.title.x = element_text(size = 25),axis.title.y = element_text(size = 25))+
+  labs(title='hac & all mean quality score',x='read_length')
+ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/big_quality_dist.png',width=25,height=10, limitsize = FALSE)
+
+unique(sub_hac_call_samp$sample)
+
+# HISTOGRAM with RANGES
+
+sub_hac_call_samp_true %>% filter(dist_range != 'left tail') %>% ggplot()+
+  geom_bar(aes(x=factor(sequence_length_template),
+               y=..count.., #(..count..)/sum(..count..)
+               fill=sample,
+               alpha=error_rate))+ #,width=0.3 ,alpha=error_rate,
+  facet_wrap(~dist_range, scales= 'free')+
+  scale_x_discrete(breaks = c(seq(1200, 1600,by = 400),seq(1700, 3500,by=500)))+
+  scale_fill_manual(name = "samples",values=c(alphabet(19),'grey22','blue'))+
+  scale_alpha_manual("error rate", values=c('> 20% error rate' = 0.2,'13% - 20% error rate' = 0.5, '10% - 13% error rate' = 0.8, '< 10% error rate' = 1))+
+  theme_ipsum(base_size=20,axis_title_size =20)+
+  labs(title='hac & mean quality score > 7',x='read_length')+
+  theme(panel.grid = element_blank(), panel.background = element_rect(fill = "white", colour = "white"))
+
+ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/quality_dist_ranges.png',width=25,height=10, limitsize = FALSE)
+
+############ DENSITY PLOT
+count_data_den <- sub_hac_call_samp_true %>% filter(dist_range != 'left tail') %>% filter((sequence_length_template < 1700 & sample != 'unclassified') | sample == 'unclassified') %>% group_by(sample) %>% summarize(n=n())
+
+facets_den <- sub_hac_call_samp_true  %>% filter(dist_range != 'left tail') %>% filter((sequence_length_template < 1700 & sample != 'unclassified') | sample == 'unclassified') %>% 
+  ggplot(aes(x=sequence_length_template,   #%>% slice_head(n = 10000)
+               fill=sample,
+               alpha=error_rate))+
+  geom_density()+
+  facet_wrap(~sample, scales= 'free_x', ncol=3)+
+  geom_text(data=count_data_den,aes(x=1260,y=0.03,label=paste0('#reads= ',scales::comma(n))),size=6,inherit.aes = F,show.legend = F)+
+  scale_fill_manual(name = "samples",values=c(alphabet(19),'grey22','blue'))+
+  scale_alpha_manual("error rate", values=c('13% - 20% error rate' = 0.1, '10% - 13% error rate' = 0.5, '< 10% error rate' = 1))+
+  theme_ipsum(base_size=20,axis_title_size =20,strip_text_size=20)+
+  labs(title='hac & mean quality score > 7',x='read length')+
+  theme(panel.grid = element_blank(), panel.background = element_rect(fill = "white", colour = "white"))
+ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/separate-distributions_bigger_facets_fix_y.png',width=30,height=30, limitsize = FALSE)  
+  
+```
+
+```{r}
+sub_hac_call %>% filter(rel_barcode == 'barcode24') %>% group_by(passes_filtering) %>% summarise(n=n())
+```
+
+#### LET's CHECK out EPI2ME classification 
+```{r}
+hac_pass_len <- sub_hac_call_samp_true %>% filter(sequence_length_template > 900 & sequence_length_template < 1655) %>% select(read_id,sequence_length_template,mean_qscore_template,sample,error_rate)
+
+# epi2me was run only on pass==TRUE reads
+epi_tax <- read.delim('~/microBio/ISL_VRF/ONT/16Slibmobile_full/classification_16s_allbarcodes.txt', sep=',', header=1) 
+
+read_len_tax <- merge(epi_tax, hac_pass_len, by.x='readid',by.y='read_id', all.y=T)
+
+read_len_tax <- read_len_tax %>% mutate(Taxon=case_when(lca == -1 ~ 'unclassified', lca == 1 ~ 'ambiguous at genus level', lca == 0 ~ as.character(species)))
+
+
+subset(read_len_tax,species == '') # same as lca=-1  TOT ### 3,134
+subset(read_len_tax,is.na(genus) == T) # same as lca=1  TOT ### 374366 
+subset(read_len_tax,lca == 0) # safe taxonomy
+
+
+###
+####### ambiguous at genus level:
+########### at which family they belong?
+################
+read_len_tax %>% filter(sample != 'MOB-280-Rec' & sample != 'MOB-022-Rec' & Taxon == 'ambiguous at genus level') %>% group_by(sample,taxid) %>% summarise(ambiguities.under.family = n()) %>% arrange(desc(ambiguities.under.family))
+###############
+##########
+######
+###
+
+read_len_tax$type <- str_split_fixed(read_len_tax$sample,'-',n=3)[,3]
+
+abn_epi2me <- read_len_tax  %>% group_by(sample,readid) %>% 
+arrange(desc(accuracy)) %>% slice_max(accuracy,n=1) %>% ungroup() %>%     group_by(sample,Taxon) %>% summarise(count_within_sample=n()) %>% arrange(desc(count_within_sample)) %>% ungroup(sample,Taxon) %>%  mutate(to_split = str_split(sample, fixed("-"),  n = 3)) %>%
+  mutate(type = map_chr(to_split, 3)) %>% select(-to_split) %>% group_by(type,Taxon) %>% mutate(count_across_samples=n()) %>% mutate(singleton_type = case_when(count_across_samples == 1 & count_within_sample == 1 ~ 'absolute singleton', count_across_samples > 1 & count_within_sample == 1 ~ 'sample singleton', count_across_samples == 1 & count_within_sample > 1 ~ 'cohort singleton' , count_across_samples > 1 & count_within_sample > 1 ~ 'not singleton')) %>% mutate(rel_ab=round(100 * count_within_sample/sum(count_within_sample),3))
+#%>% filter(singleton_type != 'absolute singleton')
+
+###
+####### classification:
+abn_epi2me <- abn_epi2me %>% mutate(classification=case_when(Taxon == 'unclassified' ~ 'unclassified',  Taxon == 'ambiguous at genus level' ~ 'ambiguous at genus level',Taxon !='unclassified' &  Taxon != 'ambiguous at genus level' ~ 'classified at species level'))
+########### which is the ratio?
+abn_epi2me <- abn_epi2me %>% fct_relevel(classification=c('classified at species level','unclassified','ambiguous at genus level'))
+
+################
+abn_epi2me %>% filter(sample != 'MOB-280-Rec' & sample != 'MOB-022-Rec') %>% 
+  ggplot(aes(x=sample,y=count_within_sample,fill=classification,alpha=singleton_type))+
+  geom_bar_pattern(position="fill", stat='identity')+
+  scale_fill_manual(values=c('red','blue','green'))+
+  scale_pattern_manual(values = c('absolute singleton' = "none", 'sample singleton' = "stripe",'cohort singleton'= 'crosshatch','not singleton' = 'circle'))+
+  theme_ipsum()+
+  theme_ipsum(base_size=20,axis_title_size =20,strip_text_size=20)+
+  labs(x='samples',y='read count')+
+  theme(panel.grid = element_blank(), panel.background = element_rect(fill = "darkgrey", colour = "darkgrey"))+
+  coord_flip()
+ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/classification.type.png',width=10,height=10, limitsize = FALSE)  
+  
+###############
+##########
+######
+###
+
+abn_epi2me %>% filter(Taxon == 'ambiguous at genus level') %>% summarise(sum(singleton_type == 'cohort singleton'))
+abn_epi2me %>% group_by(sample) %>% filter(singleton_type == 'absolute singleton') %>% summarise(n.of.singletons=n()) #summarise(sum(rel_ab))
+# check how long the tail of taxa is
+abn_epi2me %>% group_by(type) %>% summarize('less_1%' = sum(rel_ab < 1), 'more_1%' = sum(rel_ab > 1))
+```
+
+
+```{r}
+####################################################################################
+#the predictions for the tail are as good as the other ones?
+#singletons within samples are singletons also across samples?
+####################################################################################
+
+singletons <- read_len_tax %>% group_by(sample,readid) %>% arrange(desc(accuracy)) %>% slice_max(accuracy,n=1) %>% ungroup(sample, readid) %>% group_by(sample,Taxon) %>% mutate(count=n()) %>% filter(count == 1)
+
+no_singletons <- read_len_tax %>% group_by(sample,readid) %>% arrange(desc(accuracy)) %>% slice_max(accuracy,n=1) %>% ungroup(sample, readid) %>% group_by(sample,Taxon) %>% mutate(count=n()) %>% filter(count > 1)
+
+singletons %>% ungroup(sample,Taxon) %>% summarise(mean(accuracy)) #med#85.35#avg#85.6
+no_singletons %>% ungroup(sample,Taxon) %>% summarise(mean(accuracy)) #med#94.05#avg#92.8
+
+singletons %>% ungroup(sample,Taxon) %>% summarise(median(sequence_length_template)) #1444.5	
+singletons$type <- str_split_fixed(singletons$sample,'-',n=3)[,3]
+
+singletons %>% ungroup(sample,Taxon) %>% group_by(type,Taxon) %>% summarise(n=n()) %>% 
+filter(n > 1 & type == 'Vag') %>% summarise(mean = mean(n))
+#summarise(absolute_singletons = sum(n==1), sample_singletons = sum(n > 1))
+
+##################################################################################
+```
+
+######## LET's PLOT the USUAL BARPLOT ON REC, with:
+- not considering the absolute singletons [potentially false positives]
+```{r}
+most_abn_rec <- abn_epi2me %>% filter(type == 'Rec' & sample != 'MOB-280-Rec' & sample != 'MOB-022-Rec' & singleton_type != 'absolute singleton' & singleton_type != 'cohort singleton') %>% arrange(desc(rel_ab)) %>% filter(rel_ab > 5) %>% pull(Taxon) 
+#length(most_abn_rec)
+# for colors
+most_abn_rec <- c(most_abn_rec,'unclassified')
+
+rec <- abn_epi2me %>% filter(type == 'Rec' & sample != 'MOB-280-Rec' & sample != 'MOB-022-Rec' & singleton_type != 'absolute singleton' & singleton_type != 'cohort singleton') %>% mutate(most_rec=case_when(Taxon %in% most_abn_rec ~ Taxon, Taxon %!in% most_abn_rec ~ 'Other')) %>% 
+  ggplot()+
+  geom_col(aes(x=sample,y=rel_ab,fill=most_rec))+ #, show.legend = F
+  scale_fill_manual(values=c('darkblue',tol.rainbow(4),kelly(5),'tomato','darkgreen','steelblue',brewer.brbg(4),brewer.pastel1(3),ocean.thermal(3),ocean.phase(3)))+
+  scale_y_continuous(labels = function(x) paste0(x,"%"))+
+  #facet_wrap(~type, scales='free',)+
+  labs(title='Taxa > 5% relative abundance',y='relative abundance')+
+  theme_ipsum(base_size=20,axis_title_size =20)+
+  theme(legend.position = "bottom",axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1),legend.text=element_text(size=6), legend.title=element_blank(),panel.background = element_rect(fill = "grey", colour = "grey"), panel.grid=element_blank())
+ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/epi2me_rec.png',width = 8,height=10, limitsize=F)
+
+sample_specific <- abn_epi2me %>% filter(type == 'Rec' & sample != 'MOB-280-Rec' & sample != 'MOB-022-Rec' & singleton_type == 'cohort singleton')
+
+sample_specific$genus <- str_split_fixed(sample_specific$Taxon ,' ',n=2)[,1]
+
+sample_specific %>% group_by(sample,genus) %>% summarise(num.of.distinct.unique.species=n())
+```
+
+
+```{r}
+
+most_abn_vag <- abn_epi2me %>% filter(type == 'Vag')  %>% arrange(desc(rel_ab)) %>% filter(rel_ab > 0.5) %>% ungroup(type) %>% pull(Taxon) 
+# for colors
+most_abn_vag <- c(most_abn,'unclassified')
+
+vag <- abn_epi2me %>% filter(type =='Vag') %>% mutate(most_vag=case_when(Taxon %in% most_abn_vag ~ Taxon, Taxon %!in% most_abn_vag ~ 'Other')) %>% ggplot()+
+  geom_col(aes(x=sample,y=rel_ab,fill=most))+ #, show.legend = F
+  scale_fill_manual(values=c(jet(6),brewer.dark2(4),cubehelix(4),'darkgoldenrod2','coral2'))+scale_y_continuous(labels = function(x) paste0(x,"%"))+
+  #facet_wrap(~type, scales='free',)+
+  labs(title='Taxa > 0.5% relative abundance',y='relative abundance')+
+  theme_ipsum(base_size=20,axis_title_size =20)+
+  theme(legend.position = "bottom",axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1),legend.text=element_text(size=6), legend.title=element_blank(),panel.background = element_rect(fill = "grey", colour = "grey"), panel.grid=element_blank())
+ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/epi2me_vag.png',width = 10,height=10, limitsize=F)
+
+#mygrob <- grid.arrange(grobs=list(std,nano), ncol=2)
+#ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/zymo_compare.png',mygrob ,width = 22,height=10, limitsize=F)
+
+most_abn_con <- abn_epi2me %>% ungroup(sample,Taxon) %>% group_by(type) %>% arrange(desc(rel_ab)) %>% filter(rel_ab > 5) %>% ungroup(type) %>% pull(Taxon) 
+# for colors
+most_abn_con <- c(most_abn,'unclassified')
+
+con <- abn_epi2me %>% filter(type =='Control--pool') %>% mutate(most_vag=case_when(Taxon %in% most_abn_con ~ Taxon, Taxon %!in% most_abn_con ~ 'Other')) %>% ggplot()+
+  geom_col(aes(x=sample,y=rel_ab,fill=most))+ #, show.legend = F
+  scale_fill_manual(values=c(ocean.speed(6),ocean.tempo(6),ocean.amp(6)))+scale_y_continuous(labels = function(x) paste0(x,"%"))+
+  #facet_wrap(~type, scales='free',)+
+  labs(title='Taxa > 5% relative abundance',y='relative abundance')+
+  theme_ipsum(base_size=20,axis_title_size =20)+
+  theme(legend.position = "bottom",axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1),legend.text=element_text(size=6), legend.title=element_blank(),panel.background = element_rect(fill = "grey", colour = "grey"), panel.grid=element_blank())
+ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/epi2me_con.png',width = 10,height=10, limitsize=F)
+```
+
+#### LET's check Zymo standards comparing expected(table)-nano(epi2me)-illumina(burst)
+
+```{r}
+
+selected <- c('Shigella','Escherichia','Pseudomonas','Salmonella','Lactobacillus','Enterococcus','Staphylococcus','Listeria','Bacillus')
+
+abn_epi2me_samp$genus <- str_split_fixed(abn_epi2me_samp$species,' ',n=2)[,1]
+comp <- abn_epi2me_samp %>% filter(type=='Zymo')
+comp$Taxon <- ifelse(comp$genus %in% selected, comp$genus,'Other')
+
+nano <-ggplot(comp)+
+  geom_col(aes(x=type,y=rel_ab,fill=Taxon))+#%>% summarise(sum(rel_ab))
+  scale_y_continuous(labels = function(x) paste0(x,"%"))+
+  scale_fill_manual(values=c('darkorange','darkorange3',watlington(7),'brown1'), breaks=c('Shigella','Escherichia','Pseudomonas','Salmonella','Lactobacillus','Enterococcus','Staphylococcus','Listeria','Bacillus','Other'))+labs(x='Nanopore Zymo',y='')+theme_ipsum(base_size=18)+theme(axis.text.x=element_blank(),legend.position = "bottom",axis.title.x = element_text(size = 25))+guides(fill=guide_legend(nrow=3,byrow=TRUE))
+
+#### the expected abundances are:
+standard <- data.frame(Taxon=c('Escherichia coli','Pseudomonas aeruginosa','Salmonella enterica','Lactobacillus fermentum','Enterococcus faecalis','Staphylococcus aureus','Listeria monocytogenes','Bacillus subtilis'),rel_ab=c(10.1,4.2,10.4,18.4,9.9,15.5,14.1,17.4),type=rep('Zymo',8))
+
+std<-ggplot(standard)+
+  geom_col(aes(x=type,y=rel_ab,fill=Taxon))+
+  scale_y_continuous(labels = function(x) paste0(x,"%"))+
+  scale_fill_manual(values = c('darkorange3',watlington(7)),
+  breaks = c('Escherichia coli','Pseudomonas aeruginosa','Salmonella enterica','Lactobacillus fermentum','Enterococcus faecalis','Staphylococcus aureus','Listeria monocytogenes','Bacillus subtilis'))+labs(x='Expected Zymo',y='')+
+  theme_ipsum(base_size=18)+theme(axis.text.x=element_blank(),legend.position = "bottom",axis.title.x = element_text(size = 25))+guides(fill=guide_legend(nrow=3,byrow=TRUE))
+
+mygrob <- grid.arrange(grobs=list(std,nano), ncol=2)
+ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/zymo_compare.png',mygrob ,width = 15,height=10, limitsize=F)
+
+burst_tax <-read.delim(file='~/microBio/ISL_VRF/ONT/16Slibmobile_full/all_samples_BURST_illumina.tsv', header=1, sep='\t')
+burst_tax[duplicated(burst_tax$qseqid) == T,]
+
+burst_tax$genus <- str_split_fixed(str_split_fixed(burst_tax$taxon,';g__',n=2)[,2], ';',n=2)[,1]
+burst_tax$species <- str_replace_all(str_split_fixed(str_split_fixed(burst_tax$taxon,';g__',n=2)[,2],';',n=2)[,2] ,';t__','')
+burst_tax$family <- str_split_fixed(str_split_fixed(burst_tax$taxon,';f__',n=2)[,2], ';',n=2)[,1]
+burst_tax$order <- str_split_fixed(str_split_fixed(burst_tax$taxon,';o__',n=2)[,2], ';',n=2)[,1]
+
+burst_lastax <- burst_tax %>% mutate(last_Taxon=case_when(species !=''~ species,species == '' ~ genus, genus == ''~ family, family == ''~order)) 
+
+prova <- burst_lastax[c(1:100),]
+
+abn_burst <- burst_lastax %>% filter(evalue  == 0.0) %>% group_by(sample,qseqid) %>% arrange(desc(pident)) %>% slice_max(pident,n=1) %>% ungroup(sample, qseqid) %>% select(sample,last_Taxon,genus) %>% group_by(sample,last_Taxon) %>% summarize(count=n()) %>% arrange(desc(count)) %>% mutate(rel_ab=round(100 * count/sum(count),3)) %>% select(last_Taxon,rel_ab)
+
+abn_burst$source_reads <-str_split_fixed(abn_burst$sample,'_',n=2)
+abn_burst$source <- abn_burst$source_reads[,1]
+abn_burst$reads <- abn_burst$source_reads[,2]
+#abn_burst %>% group_by(sample) %>% summarise(S=sum(rel_ab))
+
+selected.burst <- c('s__Escherichia coli','s__Pseudomonas aeruginosa','s__Salmonella enterica','s__Lactobacillus fermentum','s__Enterococcus faecalis','s__Staphylococcus aureus','s__Listeria monocytogenes','s__Bacillus subtilis')
+
+abn_burst$Taxon <- ifelse( abn_burst$last_Taxon %in% selected.burst, abn_burst$last_Taxon,'Other')
+
+abn_burst %>% filter(source == 'Zymo') %>% ggplot()+
+  geom_col(aes(x=source,y=rel_ab,fill=last_Taxon)) +
+  #scale_y_continuous(labels = function(x) paste0(x,"%"))+
+  scale_fill_manual(values = c('darkorange3',watlington(7)),
+  breaks = c('Escherichia coli','Pseudomonas aeruginosa','Salmonella enterica','Lactobacillus fermentum','Enterococcus faecalis','Staphylococcus aureus','Listeria monocytogenes','Bacillus subtilis'))+labs(x='Expected Zymo',y='')+
+  theme_ipsum(base_size=18)+theme(axis.text.x=element_blank(),legend.position = "bottom",axis.title.x = element_text(size = 30))
+
+ill <-
+  
+
+
+
+
+library(gridExtra)
+mygrob <- grid.arrange(grobs=list(std,nano), ncol=2)
+ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/zymo_compare.png',mygrob ,width = 22,height=10, limitsize=F)
+```
+
