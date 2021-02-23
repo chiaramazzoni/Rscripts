@@ -22,12 +22,13 @@ library(purrr)
 library(tibble)
 '%!in%' <- function(x,y)!('%in%'(x,y))
 
-save(sub_hac_call, sub_hac_call_samp_true, abn_epi2me, burst_lastax, abn_burst, file = "~/microBio/ISL_VRF/ONT/16Slibmobile_full/overview_data.RData")
+setwd("~/Documents/chiara/Analysis")
+save(sub_hac_call, sub_hac_call_samp_true, abn_epi2me, burst_lastax, abn_burst, file = "./overview_data.RData")
 # To load the data again
-load("~/microBio/ISL_VRF/ONT/16Slibmobile_full/overview_data.RData")
+load("./overview_data.RData")
 ```
 
-```{r}
+```{r - wrangling sequencing summary data}
 hac_call <- read.delim('~/microBio/ISL_VRF/ONT/16Slibmobile_full/sequencing_summary.txt', sep='\t', header=1)
 
 offtargets <- c("barcode01", "barcode07", "barcode09", "barcode20", "barcode23") #offtargets
@@ -68,7 +69,7 @@ ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/barcode_count.png',width=25,hei
 ```
 
 
-```{r}
+```{r - NEW Variables and plot barplots and dist of reads}
 ## encoding of new variables: error_rate and dist_range
 
 sub_hac_call_samp <- sub_hac_call_samp %>% mutate(error_rate = case_when(mean_qscore_template < 7 | mean_qscore_template == 7 ~ '> 20% error rate',mean_qscore_template > 7 & mean_qscore_template < 9 | mean_qscore_template == 9 ~ '13% - 20% error rate', mean_qscore_template > 9 &  mean_qscore_template < 10 | mean_qscore_template == 10 ~ '10% - 13% error rate',mean_qscore_template > 10 ~ '< 10% error rate'))
@@ -157,11 +158,11 @@ sub_hac_call %>% filter(rel_barcode == 'barcode24') %>% group_by(passes_filterin
 ```
 
 #### LET's CHECK out EPI2ME classification 
-```{r}
+```{r - EPI2ME classification}
 hac_pass_len <- sub_hac_call_samp_true %>% filter(sequence_length_template > 900 & sequence_length_template < 1655) %>% select(read_id,sequence_length_template,mean_qscore_template,sample,error_rate)
 
 # epi2me was run only on pass==TRUE reads
-epi_tax <- read.delim('~/microBio/ISL_VRF/ONT/16Slibmobile_full/classification_16s_allbarcodes.txt', sep=',', header=1) 
+epi_tax <- read.delim('./epi2me/classification_16s_allbarcodes.txt', sep=',', header=1) 
 
 read_len_tax <- merge(epi_tax, hac_pass_len, by.x='readid',by.y='read_id', all.y=T)
 
@@ -196,7 +197,8 @@ abn_epi2me <- abn_epi2me %>% mutate(classification=case_when(Taxon == 'unclassif
 ########### which is the ratio?
 abn_epi2me <- abn_epi2me %>% fct_relevel(classification=c('classified at species level','unclassified','ambiguous at genus level'))
 
-################
+################ PLOT
+
 abn_epi2me %>% filter(sample != 'MOB-280-Rec' & sample != 'MOB-022-Rec') %>% 
   ggplot(aes(x=sample,y=count_within_sample,fill=classification,alpha=singleton_type))+
   geom_bar_pattern(position="fill", stat='identity')+
@@ -244,9 +246,11 @@ filter(n > 1 & type == 'Vag') %>% summarise(mean = mean(n))
 ##################################################################################
 ```
 
-######## LET's PLOT the USUAL BARPLOT ON REC, with:
+######## USUAL BARPLOTs ON REC, VAG, and STANDARD with:
 - not considering the absolute singletons [potentially false positives]
 ```{r}
+#------------- how's the REC?
+
 most_abn_rec <- abn_epi2me %>% filter(type == 'Rec' & sample != 'MOB-280-Rec' & sample != 'MOB-022-Rec' & singleton_type != 'absolute singleton' & singleton_type != 'cohort singleton') %>% arrange(desc(rel_ab)) %>% filter(rel_ab > 5) %>% pull(Taxon) 
 #length(most_abn_rec)
 # for colors
@@ -272,6 +276,7 @@ sample_specific %>% group_by(sample,genus) %>% summarise(num.of.distinct.unique.
 
 
 ```{r}
+#------------- how's the Vag?
 
 most_abn_vag <- abn_epi2me %>% filter(type == 'Vag')  %>% arrange(desc(rel_ab)) %>% filter(rel_ab > 0.5) %>% ungroup(type) %>% pull(Taxon) 
 # for colors
@@ -288,6 +293,10 @@ ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/epi2me_vag.png',width = 10,heig
 
 #mygrob <- grid.arrange(grobs=list(std,nano), ncol=2)
 #ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/zymo_compare.png',mygrob ,width = 22,height=10, limitsize=F)
+```
+
+```{r}
+#------------- how's the Standard?
 
 most_abn_con <- abn_epi2me %>% ungroup(sample,Taxon) %>% group_by(type) %>% arrange(desc(rel_ab)) %>% filter(rel_ab > 5) %>% ungroup(type) %>% pull(Taxon) 
 # for colors
@@ -303,12 +312,39 @@ con <- abn_epi2me %>% filter(type =='Control--pool') %>% mutate(most_vag=case_wh
 ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/epi2me_con.png',width = 10,height=10, limitsize=F)
 ```
 
-#### LET's check Zymo standards comparing expected(table)-nano(epi2me)-illumina(burst)
+# BURST classification
+
+```{r}
+burst_tax <-read.delim(file='./all_samples_BURST_illumina.tsv', header=1, sep='\t')
+burst_tax[duplicated(burst_tax$qseqid) == T,]
+
+burst_tax$genus <- str_split_fixed(str_split_fixed(burst_tax$taxon,';g__',n=2)[,2], ';',n=2)[,1]
+burst_tax$species <- str_replace_all(str_split_fixed(str_split_fixed(burst_tax$taxon,';g__',n=2)[,2],';',n=2)[,2] ,';t__','')
+burst_tax$family <- str_split_fixed(str_split_fixed(burst_tax$taxon,';f__',n=2)[,2], ';',n=2)[,1]
+burst_tax$order <- str_split_fixed(str_split_fixed(burst_tax$taxon,';o__',n=2)[,2], ';',n=2)[,1]
+
+burst_lastax <- burst_tax %>% mutate(last_Taxon=case_when(species !=''~ species,species == '' ~ genus, genus == ''~ family, family == ''~order)) 
+
+prova <- burst_lastax[c(1:100),]
+
+abn_burst <- burst_lastax %>% filter(evalue  == 0.0) %>% group_by(sample,qseqid) %>% arrange(desc(pident)) %>% slice_max(pident,n=1) %>% ungroup(sample, qseqid) %>% select(sample,last_Taxon,genus) %>% group_by(sample,last_Taxon) %>% summarize(count=n()) %>% arrange(desc(count)) %>% mutate(rel_ab=round(100 * count/sum(count),3)) %>% select(last_Taxon,rel_ab)
+
+abn_burst$source_reads <-str_split_fixed(abn_burst$sample,'_',n=2)
+abn_burst$source <- abn_burst$source_reads[,1]
+abn_burst$reads <- abn_burst$source_reads[,2]
+
+```
+
+
+#### LET's check Zymo standards comparing:
+#-expected(table)
+#-nano(epi2me)
+#-illumina(burst) 
 
 ```{r}
 
 selected <- c('Shigella','Escherichia','Pseudomonas','Salmonella','Lactobacillus','Enterococcus','Staphylococcus','Listeria','Bacillus')
-
+#------------ from Epi2me classification
 abn_epi2me_samp$genus <- str_split_fixed(abn_epi2me_samp$species,' ',n=2)[,1]
 comp <- abn_epi2me_samp %>% filter(type=='Zymo')
 comp$Taxon <- ifelse(comp$genus %in% selected, comp$genus,'Other')
@@ -331,23 +367,7 @@ std<-ggplot(standard)+
 mygrob <- grid.arrange(grobs=list(std,nano), ncol=2)
 ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/zymo_compare.png',mygrob ,width = 15,height=10, limitsize=F)
 
-burst_tax <-read.delim(file='~/microBio/ISL_VRF/ONT/16Slibmobile_full/all_samples_BURST_illumina.tsv', header=1, sep='\t')
-burst_tax[duplicated(burst_tax$qseqid) == T,]
-
-burst_tax$genus <- str_split_fixed(str_split_fixed(burst_tax$taxon,';g__',n=2)[,2], ';',n=2)[,1]
-burst_tax$species <- str_replace_all(str_split_fixed(str_split_fixed(burst_tax$taxon,';g__',n=2)[,2],';',n=2)[,2] ,';t__','')
-burst_tax$family <- str_split_fixed(str_split_fixed(burst_tax$taxon,';f__',n=2)[,2], ';',n=2)[,1]
-burst_tax$order <- str_split_fixed(str_split_fixed(burst_tax$taxon,';o__',n=2)[,2], ';',n=2)[,1]
-
-burst_lastax <- burst_tax %>% mutate(last_Taxon=case_when(species !=''~ species,species == '' ~ genus, genus == ''~ family, family == ''~order)) 
-
-prova <- burst_lastax[c(1:100),]
-
-abn_burst <- burst_lastax %>% filter(evalue  == 0.0) %>% group_by(sample,qseqid) %>% arrange(desc(pident)) %>% slice_max(pident,n=1) %>% ungroup(sample, qseqid) %>% select(sample,last_Taxon,genus) %>% group_by(sample,last_Taxon) %>% summarize(count=n()) %>% arrange(desc(count)) %>% mutate(rel_ab=round(100 * count/sum(count),3)) %>% select(last_Taxon,rel_ab)
-
-abn_burst$source_reads <-str_split_fixed(abn_burst$sample,'_',n=2)
-abn_burst$source <- abn_burst$source_reads[,1]
-abn_burst$reads <- abn_burst$source_reads[,2]
+#----------- from BURST classification
 #abn_burst %>% group_by(sample) %>% summarise(S=sum(rel_ab))
 
 selected.burst <- c('s__Escherichia coli','s__Pseudomonas aeruginosa','s__Salmonella enterica','s__Lactobacillus fermentum','s__Enterococcus faecalis','s__Staphylococcus aureus','s__Listeria monocytogenes','s__Bacillus subtilis')
@@ -361,14 +381,15 @@ abn_burst %>% filter(source == 'Zymo') %>% ggplot()+
   breaks = c('Escherichia coli','Pseudomonas aeruginosa','Salmonella enterica','Lactobacillus fermentum','Enterococcus faecalis','Staphylococcus aureus','Listeria monocytogenes','Bacillus subtilis'))+labs(x='Expected Zymo',y='')+
   theme_ipsum(base_size=18)+theme(axis.text.x=element_blank(),legend.position = "bottom",axis.title.x = element_text(size = 30))
 
-ill <-
-  
-
-
-
 
 library(gridExtra)
 mygrob <- grid.arrange(grobs=list(std,nano), ncol=2)
 ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/zymo_compare.png',mygrob ,width = 22,height=10, limitsize=F)
+```
+
+###
+
+```{r}
+
 ```
 
