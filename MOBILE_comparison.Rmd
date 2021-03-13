@@ -1,0 +1,388 @@
+---
+title: "MOMS-PI comparison"
+author: "Chiara Mazz.oni"
+date: "2 marzo 2021"
+output: html_document
+---
+
+
+
+```{r}
+suppressPackageStartupMessages({
+  library(phyloseq)
+  #library(SummarizedExperiment)
+  #library(MultiAssayExperiment)
+  library(dplyr)
+  library(tidyr)
+  library(ggplot2)
+  #library(UpSetR)
+  library(ade4)
+  library(vegan)
+  library(tibble)
+  #library(MiRKAT)
+})
+
+BiocManager::install("dozmorovlab/HMP2Data")
+library(HMP2Data)
+
+```
+
+```{r}
+#data("momspi16S_mtx")
+#data("momspi16S_tax")
+#data("momspi16S_samp")
+
+momspi16S_phyloseq <- momspi16S()
+#list("MOMS-PI 16S" = momspi16S_phyloseq) %>% table_two()
+meta <-data.frame(momspi16S_samp)
+table(meta$visit_number)
+
+moms_vag <- subset_samples(momspi16S_phyloseq, visit_number==5 & sample_body_site == 'vagina')
+moms_rec <- subset_samples(momspi16S_phyloseq, visit_number==5 & sample_body_site == 'rectum')
+#sample_variables(moms_vag)
+chosen_vag <- sample_data(moms_vag)$subject_id[1:20]
+chosen_rec <- sample_data(moms_rec)$subject_id[which(chosen_vag %in% sample_data(moms_rec)$subject_id)]
+
+subset_vag <- sample_data(moms_vag)[1:20]
+subset_rec <- sample_data(moms_rec)[which(chosen_vag %in% sample_data(moms_rec)$subject_id),]
+
+#ownames(subset_vag)
+ 
+vag_table <- data.frame( otu_table(moms_vag)[,which( rownames(subset_vag) %in% colnames(otu_table(moms_vag)))] )
+rec_table <- data.frame( otu_table(moms_rec)[,which( rownames(subset_rec) %in% colnames(otu_table(moms_rec)))]  )
+
+taxa_moms <- data.frame( tax_table(moms_vag) )
+
+ranks <- rank_names(moms_vag)
+
+#alpha = estimate_richness(phyloseq, measures=c("Observed", "InvSimpson", "Shannon"))
+```
+
+```{r}
+counts_by_rank_moms<- data.frame(matrix(ncol=length(chosen_rec))) #  <--- change here
+ranks <- rank_names(moms_rec)
+colnames(counts_by_rank_moms) <- chosen_rec # <--- change here
+names_for_rows <- c('artifact')
+i <- 'Species'
+for (i in ranks){
+  levels <- as.character(unique(taxa_moms[,i]))
+  for (el in levels){
+   n_occur <- grep(el, taxa_moms[,i], fixed=T)
+   new_row <-colSums(rec_table[n_occur,]) #  <--- change here
+   counts_by_rank_moms <- rbind(counts_by_rank_moms,new_row)
+     if ( i == 'Kingdom'){ 
+    prefix <- 'k__'}
+    else if ( i == 'Phylum'){
+    prefix <- 'p__'} 
+    else if ( i == 'Class'){
+    prefix <- 'c__'}
+    else if ( i == 'Order'){
+    prefix <- 'o__'}
+    else if  ( i == 'Family'){
+    prefix <- 'f__'}
+    else if  ( i == 'Genus'){
+    prefix <- 'g__'}
+    else { prefix <- 's__'}
+   complete_name <- get_higher(i,prefix,el)
+   names_for_rows <- c(names_for_rows,complete_name)
+  }
+}
+
+rownames(counts_by_rank_moms) <- names_for_rows
+counts_by_rank_moms <- remove_missing(counts_by_rank_moms)
+counts_by_rank_cleared_moms <- counts_by_rank_moms[-which(rowSums(counts_by_rank_moms) == 0),]
+
+
+for (i in ranks){
+  if ( i == 'RDP_Kingdom'){ 
+    prefix <- 'k__'}
+    else if ( i == 'RDP_Phylum'){
+    prefix <- 'p__'} 
+    else if ( i == 'RDP_Class'){
+    prefix <- 'c__'}
+    else if ( i == 'RDP_Order'){
+    prefix <- 'o__'}
+    else if  ( i == 'RDP_Family'){
+    prefix <- 'f__'}
+    else if  ( i == 'RDP_Genus'){
+    prefix <- 'g__'}
+    else { prefix <- 's__'}
+  grep(prefix,rownames(counts_by_rank_cleared_moms), fixed=T)
+  print(prefix)
+  print(colSums(counts_by_rank_cleared_moms))
+}
+
+
+j <- 1
+get_higher <- function(i,prefix,el) {
+  rank.col.ind <- grep(i, ranks, fixed=T)
+  name_no_prefix = str_remove(el,prefix)
+  pos <- grep(name_no_prefix, as.character(taxa_moms[,rank.col.ind]), fixed=T)[1]     
+  rank_string <- paste0(prefix,el)
+  while ( rank.col.ind > 2){
+    higher_rank <- as.character(taxa_moms[pos,rank.col.ind-1])
+    rank.col.ind <- rank.col.ind-1
+    rank_string <- paste0(higher_rank,';',rank_string)
+    }
+  el <- rank_string
+return(el)
+}
+
+write.table(counts_by_rank_cleared_moms,'~/microBio/ISL_VRF/ONT/16Slibmobile_full/hierarchical_byMOMS-PIsample_count_table_REC.tsv', sep='\t',quote=F, row.names = T)
+
+```
+## PRE-PROCESS TOWARDS PCOA
+```{r}
+
+################# MOMs-PI table vag
+
+#### choose if you want till FAMILY LEVEL OR GENUS LEVEL
+taxa_string <- paste(as.character(taxa_moms$Kingdom),as.character(taxa_moms$Phylum),as.character(taxa_moms$Class),as.character(taxa_moms$Order),as.character(taxa_moms$Family),as.character(taxa_moms$Genus) ,sep=';')
+
+grep('Bacteroides',taxa_string) # no Bacteroides in MOMS-PI vag
+grep('Escherichia',taxa_string)
+grep('Streptococcus',taxa_string)
+#,as.character(taxa$Genus),as.character(taxa$Species)
+
+vag_table$Taxa <- taxa_string
+glommed.vag <- aggregate(. ~ Taxa, data=vag_table, FUN=sum)
+vag.no0 <- glommed.vag[-which(rowSums(glommed.vag[,2:11]) == 0),]
+rownames(vag.no0) <- vag.no0$Taxa
+vag.no0$Taxa <- NULL
+
+#################### MOB table vag
+otu_table_class <-read.delim('~/microBio/ISL_VRF/ONT/16Slibmobile_full/joined_DECI_RDP_distotu3_count_table.tsv', sep='\t')
+
+grep('Bacteroides',otu_table_class$RDP_Genus) 
+grep('Escherichia',otu_table_class$RDP_Genus)
+grep('Streptococcus',otu_table_class$RDP_Genus)
+
+MOB.taxa <- data.frame(otu_table_class[,grep("RDP|seq_header", colnames(otu_table_class))], row.names='seq_header')
+
+MOB.vag <- data.frame(otu_table_class[,grep("Vag|seq_header", colnames(otu_table_class))], row.names='seq_header')
+
+# till family-level taxonomy 
+MOB.taxa_string <- paste(as.character(MOB.taxa$RDP_Kingdom),as.character(MOB.taxa$RDP_Phylum),as.character(MOB.taxa$RDP_Class),as.character(MOB.taxa$RDP_Order),as.character(MOB.taxa$RDP_Family),as.character(MOB.taxa$RDP_Genus), sep=';') 
+
+grep('Bacteroides',MOB.taxa_string) 
+
+MOB.vag$Taxa <- MOB.taxa_string
+glommed.vag <- aggregate(. ~ Taxa, data=MOB.vag, FUN=sum)
+MOB.vag.no0 <- glommed.vag[-which(rowSums(glommed.vag[,2:11]) == 0),]
+rownames(MOB.vag.no0) <- MOB.vag.no0$Taxa
+MOB.vag.no0$Taxa <- NULL
+
+########## merging
+moms.MOB.vag<- merge(vag.no0, MOB.vag.no0, by='row.names', all= T )
+rownames(moms.MOB.vag) <- moms.MOB.vag$Row.names
+moms.MOB.vag$Row.names <- NULL
+moms.MOB.vag[is.na(moms.MOB.vag)] <- 0
+
+############################ MOMs-PI table REC
+
+rec_table$Taxa <- taxa_string
+glommed.rec <- aggregate(. ~ Taxa, data=rec_table, FUN=sum)
+rec.no0 <- glommed.rec[-which(rowSums(glommed.rec[,2:10]) == 0),]
+rownames(rec.no0) <- rec.no0$Taxa
+rec.no0$Taxa <- NULL
+
+######################### MOB table rec
+MOB.rec <- data.frame(otu_table_class[,grep("Rec|seq_header", colnames(otu_table_class))], row.names='seq_header')
+
+MOB.rec$Taxa <- MOB.taxa_string
+glommed.rec <- aggregate(. ~ Taxa, data=MOB.rec, FUN=sum)
+MOB.rec.no0 <- glommed.rec[-which(rowSums(glommed.rec[,2:11]) == 0),]
+rownames(MOB.rec.no0) <- MOB.rec.no0$Taxa
+MOB.rec.no0$Taxa <- NULL
+
+########## merging
+moms.MOB.rec<- merge(rec.no0, MOB.rec.no0, by='row.names', all= T )
+rownames(moms.MOB.rec) <- moms.MOB.rec$Row.names
+moms.MOB.rec$Row.names <- NULL
+moms.MOB.rec[is.na(moms.MOB.rec)] <- 0
+
+```
+# ACTUAL PCOA
+```{r}
+library(vegan)
+library(ape)
+
+moms.MOB.rec
+rec.norm<-apply(moms.MOB.rec, 2, function(i) (i/sum(i)) *100) 
+
+moms.MOB.vag
+vag.norm<-apply(moms.MOB.vag, 2, function(i) (i/sum(i)) *100) 
+
+# distance matrix
+vag.dist <- vegdist(t(vag.norm), method = 'bray', na.rm = T)
+pcoa.res.vag <- pcoa(vag.dist)[["vectors"]][,1:3]
+
+rec.dist <- vegdist(t(rec.norm), method = 'bray', na.rm = T)
+pcoa.res.rec <- pcoa(rec.dist)[["vectors"]][,1:3]
+```
+
+```{r}
+library(plotly)
+library(hrbrthemes)
+
+data.frame(pcoa.res.vag[,c(1,2)]) %>% tibble::rownames_to_column('sample') %>% mutate(cohort=case_when(startsWith(sample,'E') ~ 'MOMS-PI', startsWith(sample,'M') ~ 'MOBILE')) %>% ggplot()+
+  geom_point(aes(x=Axis.1, y=Axis.2, color=cohort))+
+  scale_color_manual(values=c('blue','red'))+
+  labs(title='PCoA comparing Vaginal samples (Bray-Curtis on family-level classification)' )+
+theme_ipsum(base_size=10,axis_title_size =10,strip_text_size=10)
+ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/pcoa.vag.png', width = 9, height = 6)
+
+
+data.frame(pcoa.res.rec[,1:2]) %>% tibble::rownames_to_column('sample') %>% mutate(cohort=case_when(startsWith(sample,'E') ~ 'MOMS-PI', startsWith(sample,'M') ~ 'MOBILE')) %>% ggplot()+
+  geom_point(aes(x=Axis.1, y=Axis.2, shape=cohort,color=cohort))+
+  scale_shape_manual(values=c(7,21))+
+  scale_color_manual(values=c('blue','red'))+
+  labs(title='PCoA comparing Rectal samples (Bray-Curtis on family-level classification)' )+
+  theme_ipsum(base_size=10,axis_title_size =10,strip_text_size=10)
+ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/pcoa.rec.png', width = 9, height = 6)
+
+
+########################################## maybe 3d?
+library(rgl)
+library(RColorBrewer)
+# This is to output a rgl plot in a rmarkdown document. Note that you must add webgl=TRUE, results='hide' in the chunck header
+
+to_plot <- data.frame(pcoa.res.vag) %>% tibble::rownames_to_column('sample') %>% mutate(cohort=case_when(startsWith(sample,'E') ~ 'MOMS-PI', startsWith(sample,'M') ~ 'MOBILE'))
+
+p <- plot_ly() %>% add_trace(data = to_plot, x=to_plot[,1] , y=to_plot[,2] , z = to_plot[,3], color = ~ cohort, colors = brewer.pal(3, "Set1"), type = "scatter3d", mode='markers') %>% layout(xaxis =list(ticktext='', tickvals=''), yaxis=list(ticktext='', tickvals=''))
+htmlwidgets::saveWidget(as_widget(p), "~/microBio/ISL_VRF/ONT/16Slibmobile_full/pcoa.40.vag.html")
+#
+```
+
+```{r}
+library(pheatmap)
+
+annot.col <- to_plot %>% select(sample,cohort)
+rownames(annot.col) <- annot.col$sample
+annot.col$sample <- NULL
+
+dim(rec.norm)
+vag.norm
+
+
+rownames(rec.norm) <- stringr::str_split_fixed(rownames(data.frame(rec.norm)),';',n=5)[,5]
+rec.norm.filt <- rec.norm[which(rowSums(rec.norm) > 2),]
+dim(rec.norm.filt)
+#colSums(rec.norm)
+png("~/microBio/ISL_VRF/ONT/16Slibmobile_full/pheatmap_MOB_MOMS_rec.png",width = 1300,height = 800)
+#pdf("pheatmap-MOMS.pi.png",width = 3000,height = 1200,pointsize = 40)
+heat.plot <- pheatmap(main='Comparison rectal samples (Abn > 2%)',rec.norm.filt , cellheight = 8,color = colorRampPalette(c('lightsteelblue2', 'blue'))(20),cluster_rows= TRUE,cluster_cols= T,fontsize_row=8,fontsize_col=9,show_rownames=T,show_colnames=T,angle_col=45,border_color=F, treeheight_row= 50, annotation_col =annot.col,annotation_colors =list(cohort = c('MOBILE' = "turquoise", 'MOMS-PI'="indianred1") ) )
+dev.off()
+
+
+rownames(vag.norm) <- stringr::str_split_fixed(rownames(data.frame(vag.norm)),';',n=5)[,5]
+vag.norm.filt <- vag.norm[which(rowSums(vag.norm) > 2),]
+
+png("~/microBio/ISL_VRF/ONT/16Slibmobile_full/pheatmap_MOB_MOMS_vag.png",width = 1200,height = 700)
+#pdf("pheatmap-MOMS.pi.png",width = 3000,height = 1200,pointsize = 40)
+heat.plot <- pheatmap(main='Comparison Vaginal samples (Abn > 2%)',vag.norm.filt, cellheight = 8,color = colorRampPalette(c('lightsteelblue2', 'blue'))(20),cluster_rows= TRUE,cluster_cols= T,fontsize_row=8,fontsize_col=9,show_rownames=T,angle_col=45,border_color=F, treeheight_row= 50, annotation_col =annot.col, annotation_colors =list(cohort = c('MOBILE' = "turquoise", 'MOMS-PI'="indianred1") ) )
+dev.off()
+```
+# SHANNON DIVERSITY
+```{r}
+
+to_plot <- data.frame(pcoa.res.vag) %>% tibble::rownames_to_column('sample') %>% mutate(cohort=case_when(startsWith(sample,'E') ~ 'MOMS-PI', startsWith(sample,'M') ~ 'MOBILE'))
+
+sh.rec <- data.frame(shannon = diversity(moms.MOB.rec, index = "shannon", MARGIN = 2, base = exp(1)))
+to_box_rec <- merge(sh.rec,to_plot, by.x='row.names', by.y='sample')
+
+sh.vag <- data.frame(shannon = diversity(moms.MOB.vag, index = "shannon", MARGIN = 2, base = exp(1)))
+to_box_vag <- merge(sh.vag,to_plot, by.x='row.names', by.y='sample')
+
+```
+
+```{r}
+to_box_vag %>% ggplot()+
+  geom_boxplot(aes(x=cohort, y=shannon, fill=cohort, color=cohort), alpha=0.5)+
+  geom_jitter(aes(x=cohort, y=shannon, fill=cohort, color=cohort), width = 0.2)+
+  scale_fill_manual(values=c("turquoise", "indianred1"))+
+  scale_color_manual(values=c("turquoise", "indianred1"))+
+  labs(title='Shannon entropy\n on raw counts of vaginal samples', y='Shannon entropy')+
+  theme_ipsum(base_size=10)
+ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/shannon_MOB_MOMS_vag.png', width = 5, height=5)
+                                       
+
+```
+
+# BACTEROIDES
+```{r}
+#otu_table_class <-read.delim('~/microBio/ISL_VRF/ONT/16Slibmobile_full/joined_DECI_RDP_distotu3_count_table.tsv', sep='\t')
+
+moms.MOB.rec
+rec.norm<-data.frame(apply(moms.MOB.rec, 2,function(i) (i/sum(i)) *100) )
+
+#moms.MOB.vag
+#vag.norm<-data.frame(apply(moms.MOB.vag, 2, function(i) (i/sum(i)) *100) )
+
+rec.norm[grep('Bacteroides',rownames(rec.norm)),] %>% colSums(.) %>% data.frame(Abn =.) %>% tibble::rownames_to_column('Sample') %>% 
+  mutate(cohort=case_when(startsWith(Sample,'EP') == T ~'MOMS-PI', 
+                          startsWith(Sample, 'MOB') == T ~ 'MOBILE')) %>% 
+  ggplot()+
+  geom_boxplot(aes(x=cohort,y=Abn, fill=cohort, color=cohort), alpha=0.8)+
+  geom_jitter(aes(x=cohort, y=Abn, fill=cohort, color=cohort), width = 0.2)+
+  scale_fill_manual(values=c("turquoise", "indianred1"))+
+  scale_color_manual(values=c("turquoise", "indianred1"))+
+  labs(title= y='Bacteroides abundance [%]')+
+  theme_ipsum(base_size=10)
+
+```
+
+```{r}
+
+genus.MOB <- data.frame(otu_table_class[-which(is.na(otu_table_class$RDP_Genus) == T),grep("fastq|RDP_Genus", colnames(otu_table_class))]) 
+
+genus.MOB[genus.MOB$RDP_Genus == 'Streptococcus',]
+
+genus.MOB$RDP_Genus <- stringr::str_split_fixed(genus.MOB$RDP_Genus,n=2,'_')[,1]
+genus.MOB.uni<- aggregate(. ~ RDP_Genus, data=genus.MOB, FUN=sum) %>% tibble::column_to_rownames('RDP_Genus')
+genus.MOB.rel <- data.frame(apply(genus.MOB.uni, 2, function(i) (i/sum(i)) *100) ) 
+colSums(genus.MOB.rel)
+#avital<- genus.MOB.rel[grep('Bacteroides',rownames(genus.MOB.rel)),which(colSums(genus.MOB.rel[grep('Bacteroides',rownames(genus.MOB.rel)),] ) > 0)] 
+#write.table(avital,'~/microBio/ISL_VRF/ONT/16Slibmobile_full/bact_16S.tsv', row.names=T, quote=F,sep='\t')
+
+otu_table_class
+phlan.tab <- read.delim('~/microBio/ISL_VRF/ONT/16Slibmobile_full/MOBILE_Origin_merged_metaphlan_results.txt', sep='\t', row.names = 'ID')
+
+genus.mob.phlan <- phlan.tab[grepl('g__',rownames(phlan.tab)) & !grepl('s__',rownames(phlan.tab)) ,] # 
+rownames(genus.mob.phlan) <- stringr::str_split_fixed(rownames(genus.mob.phlan),n=2,'g__')[,2] 
+genus.mob.phlan[grep('Streptococcus|Lactobacillus|Finegoldia',rownames(genus.mob.phlan)), grep('MOB280', colnames(genus.mob.phlan))]
+
+merged.genus <- merge(genus.MOB.rel,genus.mob.phlan, by='row.names', all=T )
+merged.genus[is.na(merged.genus)] <- 0
+merged.genus$merged_metaphlan_results <- NULL
+merged.genus$Taxa <- NULL
+merged.genus$Control.pool.R1.fastq <- NULL 
+merged.genus$PCR.NTC.R1.fastq <- NULL
+merged.genus$Zymo.R1.fastq <- NULL
+
+library(stringr)
+library(ggrepel)
+merged.genus <- merged.genus %>% pivot_longer(cols = -Row.names,names_to='Sample',values_to='Abn') %>% mutate(mum = str_extract(Sample, 'MOB.[0-9]*')) %>% mutate(mum = str_replace(mum,'\\.','')) %>% mutate(type=str_extract(Sample,'Rec|Vag|REC|VAG')) %>% mutate(seq=case_when(str_detect(Sample,'REC|VAG') ~ 'MGX', endsWith(Sample,'fastq') == T ~ 'V416S')) %>% mutate(id=paste(Row.names,mum,tolower(type),sep='_'))
+
+prova <- merged.genus %>% pivot_wider(id_cols = id,names_from=seq, values_from=Abn)
+
+merged.genus %>%  group_by(Sample) %>% arrange(desc(Abn)) %>% filter(mum == 'MOB280' & Row.names == 'Streptococcus') %>% top_n(2)
+# filter(seq == 'V416S') %>%
+ggplot()+
+  geom_boxplot(aes(x=cohort,y=Abn, fill=cohort, color=cohort), alpha=0.8)+
+  geom_jitter(aes(x=cohort, y=Abn, fill=cohort, color=cohort), width = 0.2)+
+  scale_fill_manual(values=c("turquoise", "indianred1"))+
+  scale_color_manual(values=c("turquoise", "indianred1"))+
+  labs(title= y='Bacteroides abundance [%]')+
+  theme_ipsum(base_size=10)
+
+prova[grep('Streptococcus',prova$id),]
+prova %>% ggplot()+
+  geom_point(aes(x=MGX,y=V416S, fill=id)) #+
+  #geom_text_repel(aes(x=MGX,y=V416S,label=id))
+merged.genus
+
+sort(prova[grep('Streptococcus',prova$id),]$V416S) 
+sort(prova[grep('Streptococcus',prova$id),]$MGX)
+```
+

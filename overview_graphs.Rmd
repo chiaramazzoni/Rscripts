@@ -6,7 +6,7 @@ output: html_document
 ---
 
 ```{r}
-library(rentrez)
+#library(rentrez)
 library(dplyr)
 library(stringr)
 library(ggpubr)
@@ -20,15 +20,17 @@ library(ggpattern)
 library(ggforce)
 library(purrr)
 library(tibble)
+library(ggplot2)
+library(phyloseq)
+library(ggtree)
 '%!in%' <- function(x,y)!('%in%'(x,y))
 
-setwd("~/Documents/chiara/Analysis")
-save(sub_hac_call, sub_hac_call_samp_true, abn_epi2me, burst_lastax, abn_burst, file = "./overview_data.RData")
+save(sub_hac_call, sub_hac_call_samp_true, abn_epi2me, burst_lastax, abn_burst, file = "~/microBio/ISL_VRF/ONT/16Slibmobile_full/overview_data.RData")
 # To load the data again
-load("./overview_data.RData")
+load("~/microBio/ISL_VRF/ONT/16Slibmobile_full/overview_data.RData")
 ```
 
-```{r - wrangling sequencing summary data}
+```{r}
 hac_call <- read.delim('~/microBio/ISL_VRF/ONT/16Slibmobile_full/sequencing_summary.txt', sep='\t', header=1)
 
 offtargets <- c("barcode01", "barcode07", "barcode09", "barcode20", "barcode23") #offtargets
@@ -69,7 +71,7 @@ ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/barcode_count.png',width=25,hei
 ```
 
 
-```{r - NEW Variables and plot barplots and dist of reads}
+```{r}
 ## encoding of new variables: error_rate and dist_range
 
 sub_hac_call_samp <- sub_hac_call_samp %>% mutate(error_rate = case_when(mean_qscore_template < 7 | mean_qscore_template == 7 ~ '> 20% error rate',mean_qscore_template > 7 & mean_qscore_template < 9 | mean_qscore_template == 9 ~ '13% - 20% error rate', mean_qscore_template > 9 &  mean_qscore_template < 10 | mean_qscore_template == 10 ~ '10% - 13% error rate',mean_qscore_template > 10 ~ '< 10% error rate'))
@@ -158,16 +160,22 @@ sub_hac_call %>% filter(rel_barcode == 'barcode24') %>% group_by(passes_filterin
 ```
 
 #### LET's CHECK out EPI2ME classification 
-```{r - EPI2ME classification}
+```{r}
 hac_pass_len <- sub_hac_call_samp_true %>% filter(sequence_length_template > 900 & sequence_length_template < 1655) %>% select(read_id,sequence_length_template,mean_qscore_template,sample,error_rate)
 
+hac_pass_len[hac_pass_len$read_id == '121ad835-261f-424a-bb82-34a37ebe9231',]
+
 # epi2me was run only on pass==TRUE reads
-epi_tax <- read.delim('./epi2me/classification_16s_allbarcodes.txt', sep=',', header=1) 
+epi_tax <- read.delim('~/microBio/ISL_VRF/ONT/16Slibmobile_full/epi2me_16s_allbarcodes.txt', sep=',', header=1) 
 
 read_len_tax <- merge(epi_tax, hac_pass_len, by.x='readid',by.y='read_id', all.y=T)
 
-read_len_tax <- read_len_tax %>% mutate(Taxon=case_when(lca == -1 ~ 'unclassified', lca == 1 ~ 'ambiguous at genus level', lca == 0 ~ as.character(species)))
+read_len_tax <- read_len_tax %>% mutate(Taxon=case_when(lca == -1 ~ 'unclassified', lca == 1 ~ paste0('ambiguous_genus_', species), lca == 0 ~ as.character(species)))
 
+read_len_tax %>% filter(lca == 1) %>% summarise(mean(sequence_length_template)) #-> 1432.667	
+read_len_tax %>% filter(lca == 1) %>% summarise(median(sequence_length_template)) # -> 1440
+
+read_len_tax %>% filter(lca == 1) %>% select(species) %>% unique()
 
 subset(read_len_tax,species == '') # same as lca=-1  TOT ### 3,134
 subset(read_len_tax,is.na(genus) == T) # same as lca=1  TOT ### 374366 
@@ -178,7 +186,7 @@ subset(read_len_tax,lca == 0) # safe taxonomy
 ####### ambiguous at genus level:
 ########### at which family they belong?
 ################
-read_len_tax %>% filter(sample != 'MOB-280-Rec' & sample != 'MOB-022-Rec' & Taxon == 'ambiguous at genus level') %>% group_by(sample,taxid) %>% summarise(ambiguities.under.family = n()) %>% arrange(desc(ambiguities.under.family))
+read_len_tax %>% filter(sample != 'MOB-280-Rec' & sample != 'MOB-022-Rec' & startsWith(Taxon,'ambiguous') == T) %>% group_by(sample,taxid) %>% summarise(ambiguities.under.family = n()) %>% arrange(desc(ambiguities.under.family))
 ###############
 ##########
 ######
@@ -186,20 +194,27 @@ read_len_tax %>% filter(sample != 'MOB-280-Rec' & sample != 'MOB-022-Rec' & Taxo
 
 read_len_tax$type <- str_split_fixed(read_len_tax$sample,'-',n=3)[,3]
 
-abn_epi2me <- read_len_tax  %>% group_by(sample,readid) %>% 
-arrange(desc(accuracy)) %>% slice_max(accuracy,n=1) %>% ungroup() %>%     group_by(sample,Taxon) %>% summarise(count_within_sample=n()) %>% arrange(desc(count_within_sample)) %>% ungroup(sample,Taxon) %>%  mutate(to_split = str_split(sample, fixed("-"),  n = 3)) %>%
-  mutate(type = map_chr(to_split, 3)) %>% select(-to_split) %>% group_by(type,Taxon) %>% mutate(count_across_samples=n()) %>% mutate(singleton_type = case_when(count_across_samples == 1 & count_within_sample == 1 ~ 'absolute singleton', count_across_samples > 1 & count_within_sample == 1 ~ 'sample singleton', count_across_samples == 1 & count_within_sample > 1 ~ 'cohort singleton' , count_across_samples > 1 & count_within_sample > 1 ~ 'not singleton')) %>% mutate(rel_ab=round(100 * count_within_sample/sum(count_within_sample),3))
-#%>% filter(singleton_type != 'absolute singleton')
+
+abn_epi2me <- read_len_tax %>% group_by(sample,readid) %>% 
+arrange(desc(accuracy)) %>% slice_max(accuracy,n=1) %>% ungroup() %>% 
+  group_by(sample,Taxon) %>% summarise(count_within_sample=n()) %>% arrange(desc(count_within_sample)) %>% ungroup() %>%  
+  mutate(to_split = str_split(sample, fixed("-"),  n = 3)) %>%
+  mutate(type = map_chr(to_split, 3)) %>% select(-to_split) %>% 
+  group_by(type,Taxon) %>% mutate(count_across_samples=n()) %>% 
+  mutate(singleton_type = case_when(count_across_samples == 1 & count_within_sample == 1 ~ 'absolute singleton', count_across_samples > 1 & count_within_sample == 1 ~ 'sample singleton', count_across_samples == 1 & count_within_sample > 1 ~ 'cohort singleton' , count_across_samples > 1 & count_within_sample > 1 ~ 'not singleton')) %>% ungroup() %>% group_by(sample) %>% 
+  mutate(rel_ab=round((count_within_sample/sum(count_within_sample))*100 ,3)) #%>% ungroup() %>% group_by(sample) %>% summarise(sum(rel_ab))
 
 ###
 ####### classification:
-abn_epi2me <- abn_epi2me %>% mutate(classification=case_when(Taxon == 'unclassified' ~ 'unclassified',  Taxon == 'ambiguous at genus level' ~ 'ambiguous at genus level',Taxon !='unclassified' &  Taxon != 'ambiguous at genus level' ~ 'classified at species level'))
+abn_epi2me <- abn_epi2me %>% mutate(classification=case_when(Taxon == 'unclassified' ~ 'unclassified',  startsWith(Taxon,'ambiguous') == T ~ 'ambiguous at genus level',Taxon !='unclassified' &  startsWith(Taxon,'ambiguous') == F ~ 'classified at species level'))
 ########### which is the ratio?
-abn_epi2me <- abn_epi2me %>% fct_relevel(classification=c('classified at species level','unclassified','ambiguous at genus level'))
+abn_epi2me <- abn_epi2me %>% forcats::fct_relevel(classification=c('classified at species level','unclassified','ambiguous at genus level'))
+abn_epi2me %>% filter(classification == 'ambiguous at genus level') %>% select(Taxon) %>% n_distinct() #3690
+abn_epi2me %>% filter(classification == 'ambiguous at genus level') %>% group_by(Taxon,singleton_type) %>% summarise(n=n())
+abn_epi2me %>% ungroup() %>% filter( sample == 'MOB-175-Vag') 
 
-################ PLOT
-
-abn_epi2me %>% filter(sample != 'MOB-280-Rec' & sample != 'MOB-022-Rec') %>% 
+################
+abn_epi2me %>% #filter(sample != 'MOB-280-Rec' & sample != 'MOB-022-Rec') %>% 
   ggplot(aes(x=sample,y=count_within_sample,fill=classification,alpha=singleton_type))+
   geom_bar_pattern(position="fill", stat='identity')+
   scale_fill_manual(values=c('red','blue','green'))+
@@ -220,6 +235,7 @@ abn_epi2me %>% filter(Taxon == 'ambiguous at genus level') %>% summarise(sum(sin
 abn_epi2me %>% group_by(sample) %>% filter(singleton_type == 'absolute singleton') %>% summarise(n.of.singletons=n()) #summarise(sum(rel_ab))
 # check how long the tail of taxa is
 abn_epi2me %>% group_by(type) %>% summarize('less_1%' = sum(rel_ab < 1), 'more_1%' = sum(rel_ab > 1))
+abn_epi2me %>% filter(sample == 'MOB-021-Rec')
 ```
 
 
@@ -246,17 +262,25 @@ filter(n > 1 & type == 'Vag') %>% summarise(mean = mean(n))
 ##################################################################################
 ```
 
-######## USUAL BARPLOTs ON REC, VAG, and STANDARD with:
+######## LET's PLOT the USUAL BARPLOT ON REC, with:
 - not considering the absolute singletons [potentially false positives]
 ```{r}
-#------------- how's the REC?
+#---------------------------------------------------------1) Epi2me on 16S Nanopore reads
+#---------------------------------------------------------2) rec samples
+#---------------------------------------------------------3) bar plot
 
-most_abn_rec <- abn_epi2me %>% filter(type == 'Rec' & sample != 'MOB-280-Rec' & sample != 'MOB-022-Rec' & singleton_type != 'absolute singleton' & singleton_type != 'cohort singleton') %>% arrange(desc(rel_ab)) %>% filter(rel_ab > 5) %>% pull(Taxon) 
+most_abn_rec <- abn_epi2me %>% 
+  filter(type == 'Rec' & sample != 'MOB-280-Rec' & sample != 'MOB-022-Rec') %>% 
+  filter(singleton_type != 'absolute singleton' & singleton_type != 'cohort singleton') %>% 
+  arrange(desc(rel_ab)) %>% filter(rel_ab > 5) %>% pull(Taxon) 
 #length(most_abn_rec)
 # for colors
 most_abn_rec <- c(most_abn_rec,'unclassified')
 
-rec <- abn_epi2me %>% filter(type == 'Rec' & sample != 'MOB-280-Rec' & sample != 'MOB-022-Rec' & singleton_type != 'absolute singleton' & singleton_type != 'cohort singleton') %>% mutate(most_rec=case_when(Taxon %in% most_abn_rec ~ Taxon, Taxon %!in% most_abn_rec ~ 'Other')) %>% 
+rec <- abn_epi2me %>% 
+  filter(type == 'Rec' & sample != 'MOB-280-Rec' & sample != 'MOB-022-Rec') %>% 
+  filter(singleton_type != 'absolute singleton' & singleton_type != 'cohort singleton') %>% 
+  mutate(most_rec=case_when(Taxon %in% most_abn_rec ~ Taxon, Taxon %!in% most_abn_rec ~ 'Other')) %>% 
   ggplot()+
   geom_col(aes(x=sample,y=rel_ab,fill=most_rec))+ #, show.legend = F
   scale_fill_manual(values=c('darkblue',tol.rainbow(4),kelly(5),'tomato','darkgreen','steelblue',brewer.brbg(4),brewer.pastel1(3),ocean.thermal(3),ocean.phase(3)))+
@@ -276,7 +300,12 @@ sample_specific %>% group_by(sample,genus) %>% summarise(num.of.distinct.unique.
 
 
 ```{r}
-#------------- how's the Vag?
+
+#---------------------------------------------------------1) Epi2me on 16S Nanopore reads
+#---------------------------------------------------------2) vag samples
+#---------------------------------------------------------3) bar plot
+#---------------------------------------------------------4) control sample
+#---------------------------------------------------------5) bar plot
 
 most_abn_vag <- abn_epi2me %>% filter(type == 'Vag')  %>% arrange(desc(rel_ab)) %>% filter(rel_ab > 0.5) %>% ungroup(type) %>% pull(Taxon) 
 # for colors
@@ -293,10 +322,6 @@ ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/epi2me_vag.png',width = 10,heig
 
 #mygrob <- grid.arrange(grobs=list(std,nano), ncol=2)
 #ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/zymo_compare.png',mygrob ,width = 22,height=10, limitsize=F)
-```
-
-```{r}
-#------------- how's the Standard?
 
 most_abn_con <- abn_epi2me %>% ungroup(sample,Taxon) %>% group_by(type) %>% arrange(desc(rel_ab)) %>% filter(rel_ab > 5) %>% ungroup(type) %>% pull(Taxon) 
 # for colors
@@ -312,39 +337,16 @@ con <- abn_epi2me %>% filter(type =='Control--pool') %>% mutate(most_vag=case_wh
 ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/epi2me_con.png',width = 10,height=10, limitsize=F)
 ```
 
-# BURST classification
+#### LET's check Zymo standards comparing expected(table)-nano(epi2me)-illumina(burst)
 
 ```{r}
-burst_tax <-read.delim(file='./all_samples_BURST_illumina.tsv', header=1, sep='\t')
-burst_tax[duplicated(burst_tax$qseqid) == T,]
 
-burst_tax$genus <- str_split_fixed(str_split_fixed(burst_tax$taxon,';g__',n=2)[,2], ';',n=2)[,1]
-burst_tax$species <- str_replace_all(str_split_fixed(str_split_fixed(burst_tax$taxon,';g__',n=2)[,2],';',n=2)[,2] ,';t__','')
-burst_tax$family <- str_split_fixed(str_split_fixed(burst_tax$taxon,';f__',n=2)[,2], ';',n=2)[,1]
-burst_tax$order <- str_split_fixed(str_split_fixed(burst_tax$taxon,';o__',n=2)[,2], ';',n=2)[,1]
-
-burst_lastax <- burst_tax %>% mutate(last_Taxon=case_when(species !=''~ species,species == '' ~ genus, genus == ''~ family, family == ''~order)) 
-
-prova <- burst_lastax[c(1:100),]
-
-abn_burst <- burst_lastax %>% filter(evalue  == 0.0) %>% group_by(sample,qseqid) %>% arrange(desc(pident)) %>% slice_max(pident,n=1) %>% ungroup(sample, qseqid) %>% select(sample,last_Taxon,genus) %>% group_by(sample,last_Taxon) %>% summarize(count=n()) %>% arrange(desc(count)) %>% mutate(rel_ab=round(100 * count/sum(count),3)) %>% select(last_Taxon,rel_ab)
-
-abn_burst$source_reads <-str_split_fixed(abn_burst$sample,'_',n=2)
-abn_burst$source <- abn_burst$source_reads[,1]
-abn_burst$reads <- abn_burst$source_reads[,2]
-
-```
-
-
-#### LET's check Zymo standards comparing:
-#-expected(table)
-#-nano(epi2me)
-#-illumina(burst) 
-
-```{r}
+#---------------------------------------------------------1) Epi2me on 16S Nanopore reads
+#---------------------------------------------------------2) expected zymo
+#---------------------------------------------------------2) zymo compare plot
 
 selected <- c('Shigella','Escherichia','Pseudomonas','Salmonella','Lactobacillus','Enterococcus','Staphylococcus','Listeria','Bacillus')
-#------------ from Epi2me classification
+
 abn_epi2me_samp$genus <- str_split_fixed(abn_epi2me_samp$species,' ',n=2)[,1]
 comp <- abn_epi2me_samp %>% filter(type=='Zymo')
 comp$Taxon <- ifelse(comp$genus %in% selected, comp$genus,'Other')
@@ -364,10 +366,58 @@ std<-ggplot(standard)+
   breaks = c('Escherichia coli','Pseudomonas aeruginosa','Salmonella enterica','Lactobacillus fermentum','Enterococcus faecalis','Staphylococcus aureus','Listeria monocytogenes','Bacillus subtilis'))+labs(x='Expected Zymo',y='')+
   theme_ipsum(base_size=18)+theme(axis.text.x=element_blank(),legend.position = "bottom",axis.title.x = element_text(size = 25))+guides(fill=guide_legend(nrow=3,byrow=TRUE))
 
+library(gridExtra)
 mygrob <- grid.arrange(grobs=list(std,nano), ncol=2)
 ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/zymo_compare.png',mygrob ,width = 15,height=10, limitsize=F)
 
-#----------- from BURST classification
+```
+
+```{r}
+
+#---------------------------------------------------------1) BURST on 16S Illumina reads
+#---------------------------------------------------------2) zymo compare plot
+
+burst_tax <-read.delim(file='~/microBio/ISL_VRF/ONT/16Slibmobile_full/all_samples_BURST_illumina.tsv', header=1, sep='\t')
+burst_tax[duplicated(burst_tax$qseqid) == T,]
+
+burst_tax$genus <- str_split_fixed(str_split_fixed(burst_tax$taxon,';g__',n=2)[,2], ';',n=2)[,1]
+burst_tax$species <- str_replace_all(str_split_fixed(str_split_fixed(burst_tax$taxon,';g__',n=2)[,2],';',n=2)[,2] ,';t__','')
+burst_tax$family <- str_split_fixed(str_split_fixed(burst_tax$taxon,';f__',n=2)[,2], ';',n=2)[,1]
+burst_tax$order <- str_split_fixed(str_split_fixed(burst_tax$taxon,';o__',n=2)[,2], ';',n=2)[,1]
+burst_tax$class <- str_split_fixed(str_split_fixed(burst_tax$taxon,';c__',n=2)[,2], ';',n=2)[,1]
+burst_tax$phylum <- str_split_fixed(str_split_fixed(burst_tax$taxon,';p__',n=2)[,2], ';',n=2)[,1]
+burst_tax$kingdom <- str_split_fixed(str_split_fixed(burst_tax$taxon,'k__',n=2)[,2], ';',n=2)[,1]
+
+#burst_lastax <- burst_tax %>% mutate(last_Taxon=case_when(species !=''~ species,species == '' ~ genus, genus == ''~ family, family == ''~order)) 
+
+B <- burst_tax[,c(15:21)] %>% select(kingdom,phylum,class,order,family,genus,species)
+B$burst_rank <- apply(B,1,function(x) max(which(x != '')))
+
+B$last <- NULL
+i <- 1
+for (i in seq(1,dim(B)[1],1)){
+  last <- B[i,B$burst_rank[i]]
+  B$last[i] <- as.character(last)
+}
+
+B[1882400:1882460,9]
+subset(B,kingdom == '') # 10 completely unclassified
+
+ggplot()+
+  geom_point()
+
+
+prova <- B[c(1:4000),]
+
+burst_tab <- burst_lastax %>% filter(evalue  == 0.0) %>% group_by(sample,qseqid) %>% arrange(desc(pident)) %>% slice_max(pident,n=1) %>% ungroup(sample, qseqid) %>% select(sample,last,genus) %>% group_by(sample,last_Taxon) %>% summarize(count=n()) %>% arrange(desc(count)) %>% mutate(rel_ab=round(100 * count/sum(count),3)) %>% select(last,rel_ab)
+
+burst_tab %>% select() %>% pivot_wider(names_from=qseqid, values_from= rel_ab)
+
+abn_burst <- burst_lastax %>% filter(evalue  == 0.0) %>% group_by(sample,qseqid) %>% arrange(desc(pident)) %>% slice_max(pident,n=1) %>% ungroup(sample, qseqid) %>% select(sample,last_Taxon,genus) %>% group_by(sample,last_Taxon) %>% summarize(count=n()) %>% arrange(desc(count)) %>% mutate(rel_ab=round(100 * count/sum(count),3)) %>% select(last_Taxon,rel_ab)
+
+abn_burst$source_reads <-str_split_fixed(abn_burst$sample,'_',n=2)
+abn_burst$source <- abn_burst$source_reads[,1]
+abn_burst$reads <- abn_burst$source_reads[,2]
 #abn_burst %>% group_by(sample) %>% summarise(S=sum(rel_ab))
 
 selected.burst <- c('s__Escherichia coli','s__Pseudomonas aeruginosa','s__Salmonella enterica','s__Lactobacillus fermentum','s__Enterococcus faecalis','s__Staphylococcus aureus','s__Listeria monocytogenes','s__Bacillus subtilis')
@@ -381,15 +431,447 @@ abn_burst %>% filter(source == 'Zymo') %>% ggplot()+
   breaks = c('Escherichia coli','Pseudomonas aeruginosa','Salmonella enterica','Lactobacillus fermentum','Enterococcus faecalis','Staphylococcus aureus','Listeria monocytogenes','Bacillus subtilis'))+labs(x='Expected Zymo',y='')+
   theme_ipsum(base_size=18)+theme(axis.text.x=element_blank(),legend.position = "bottom",axis.title.x = element_text(size = 30))
 
-
-library(gridExtra)
-mygrob <- grid.arrange(grobs=list(std,nano), ncol=2)
-ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/zymo_compare.png',mygrob ,width = 22,height=10, limitsize=F)
 ```
-
-###
 
 ```{r}
 
+```
+
+
+# ranks comparison of classification between RDP and DECIPHER
+```{r}
+#epi_tax <- read.delim('~/microBio/ISL_VRF/ONT/16Slibmobile_full/epi2me_16s_allbarcodes.txt', sep=',', header=1)
+#burst <- read.delim(file='~/microBio/ISL_VRF/ONT/16Slibmobile_full/all_samples_BURST_illumina.tsv', header=1, sep='\t')
+# best for idperc
+burst_lastax
+abn_burst
+data <- read.delim('~/microBio/ISL_VRF/ONT/16Slibmobile_full/joined_DECIPHER_RDP_distotu3_count_table.tsv', sep='\t')
+class.data <- data.frame(data[,grep("RDP|DECI|seq", colnames(data))], row.names='seq_header')
+
+class.data$RDP_rank <- apply(class.data[,grep("RDP", colnames(class.data))],1,function(x) max(which(is.na(x) == F)))
+class.data$DECIPHER_rank <- apply(class.data[,grep("DECIPHER", colnames(class.data))],1,function(x) max(which(is.na(x) == F)))
+
+subset(class.data, RDP_rank == -Inf)
+
+plot <- data[,grep("fastq", colnames(data))] %>% mutate(S=rowSums(.)) %>% select(S) %>% bind_cols(class.data[,grep("rank", colnames(class.data))])
+
+library(ggplot2)
+library(hrbrthemes)
+
+plot %>% pivot_longer(cols=c(RDP_rank,DECIPHER_rank),names_to='classifier', values_to='rank') %>% ggplot()+
+  geom_bar(aes(x=as.factor(rank),fill=classifier, color=classifier), position = 'dodge', stat='count', alpha=0.8)+
+  scale_fill_manual(values=c('steelblue','purple'),labels=c('DECIPHER','RDP'))+
+  scale_color_manual(values=c('steelblue','purple'),labels=c('DECIPHER','RDP'))+
+  scale_x_discrete(name ="Phylogenetic rank", 
+                    labels=c('-Inf' = "Uncl.",'1' ="Kingdom",'2' = "Phylum",'3'='Class','4'='Order','5' = 'Family','6'='Genus','7'='Species'))+
+  labs(y='# of sequences classified')+
+  theme_ipsum(base_size=10,axis_title_size =10,strip_text_size=10)
+ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/classifiers.png', height = 5, width = 7)  
+  
+ 
+```
+
+
+
+# tree of 16S V4 regions from MOBILE samples, based on dist_otu3 count_table
+
+```{r}
+library(phyloseq)
+library(stringr)
+library(ggjoy)
+require(pals)
+library(ggtree)
+
+data <- read.delim('~/microBio/ISL_VRF/ONT/16Slibmobile_full/joined_DECIPHER_RDP_distotu3_count_table.tsv', sep='\t')[,1:40]
+
+tab <- data.frame(data[,-grep("RDP|DECI|x|dist|X", colnames(data))], row.names='seq_header')
+tab.norm<-apply(tab, 2, function(i) (i/sum(i)) *100)  #rel.tab
+
+#colSums(tab.norm)
+OTU <- otu_table(tab.norm, taxa_are_rows = TRUE)
+TAX <- tax_table(as.matrix( data.frame(data[,-grep("DECI|x|dist|X|fastq", colnames(data))], row.names='seq_header') ) )
+
+rel_cols <- colnames(data)[grep('fastq',colnames(data))]
+mum <- str_split_fixed(rel_cols,'\\.[A-Z]', n=2)[,1]
+type <- str_extract(rel_cols,'Vag|Rec')
+sample.meta <- sample_data(data.frame(SAMPLE=mum, TYPE= type , row.names = rel_cols ))
+
+physeq <- phyloseq(OTU,TAX,sample.meta)
+
+
+```
+## READ IN THE CLASSIFICATION TABLES
+```{r}
+rdp_class <- read.delim('~/microBio/ISL_VRF/ONT/16Slibmobile_full/distotu3_RDP_bayes_taxa_table.tsv')
+rownames(rdp_class) <- NULL
+decipher <- read.delim('~/microBio/ISL_VRF/ONT/16Slibmobile_full/distotu3_DECIPHER_IdTaxa_taxa_table.tsv')
+rownames(decipher) <- NULL
+
+deci_rdp <- cbind(decipher,rdp_class)
+colnames(deci_rdp) <- c( paste0(rep('DECI_',7),c('Kingdom', 'Phylum', 'Class','Order', 'Family', 'Genus', 'Species')),paste0(rep('RDP_',7),c('Kingdom', 'Phylum', 'Class','Order', 'Family', 'Genus', 'Species')) )
+#library(ape)
+#all.equal.DNAbin(list(rownames(class_res)), getSequence(rep, as.string = T))
+#library(seqinr)
+rep <- read.fasta('~/microBio/ISL_VRF/ONT/16Slibmobile_full/dna-sequences_distotu3.fasta', as.string = T, forceDNAtolower = F)
+deci_rdp$seq_header <-names(rep)
+
+which(otu_tab$X.OTU.ID !=names(rep))
+otu_table_class <- merge(deci_rdp, otu_tab, by.x = 'seq_header', by.y='X.OTU.ID')
+
+
+#### decipher lacking species information
+
+#rownames(decipher) <- NULL
+#joined = cbind(decipher,otu_table_class)
+#colnames(joined) <- c('seq_header',paste0('DECIPHER_',c('Kingdom','Phylum','Class','Order','Family','Genus','Species')),colnames(joined[,c(9:ncol(joined))]))
+write.table(otu_table_class,'~/microBio/ISL_VRF/ONT/16Slibmobile_full/joined_DECI_RDP_distotu3_count_table.tsv', sep='\t', quote=F)
+
+
+```
+
+########################################### Hierarchical table for REC&VAG
+```{r}
+######## REC&VAG
+#data <- read.delim('~/microBio/ISL_VRF/ONT/16Slibmobile_full/joined_DECI_RDP_distotu3_count_table.tsv', sep='\t')
+otu_table_class
+tab <- data.frame(otu_table_class[,grep("Rec|seq_header", colnames(otu_table_class))], row.names='seq_header')
+
+#tab.norm<-apply(tab, 2, function(i) (i/sum(i)) *100)  #rel.tab
+#colSums(tab.norm)
+OTU <- otu_table(tab, taxa_are_rows = TRUE)
+TAX <- tax_table(as.matrix( data.frame(otu_table_class[,grep("RDP|seq_header", colnames(otu_table_class))], row.names='seq_header') ) )
+
+rel_cols <- colnames(otu_table_class)[grep('Rec',colnames(otu_table_class))]
+mum <- str_split_fixed(rel_cols,'\\.[A-Z]', n=2)[,1]
+type <- str_extract(rel_cols,'Rec')
+sample.meta <- sample_data(data.frame(SAMPLE=mum, TYPE= type , row.names = rel_cols ))
+
+physeq <- phyloseq(OTU,TAX,sample.meta)
+#------------------------------------------------------------------------- towards hierarchical clustering
+
+#prevdf = apply(X = otu_table(physeq), MARGIN =  1,FUN = function(x){sum(x > 0)})
+# Add taxonomy and total read counts to this data.frame
+#prevdf = data.frame(TotalCount = taxa_sums(physeq), tax_table(physeq))
+ranks <- rank_names(physeq)
+
+#tab for counts
+taxa <- data.frame(otu_table_class[,grep("RDP|seq_header", colnames(otu_table_class))], row.names='seq_header')
+# taxa for taxa
+taxa_string <- paste(as.character(taxa$RDP_Kingdom),as.character(taxa$RDP_Phylum),as.character(taxa$RDP_Class),as.character(taxa$RDP_Order),as.character(taxa$RDP_Family),as.character(taxa$RDP_Genus),as.character(taxa$RDP_Species), sep=';')
+
+samples <-colnames(tab)[grep('Rec', colnames(tab))]
+
+counts_by_rank<- data.frame(matrix(ncol=length(samples)))
+ranks <- rank_names(physeq)
+colnames(counts_by_rank) <- samples
+names_for_rows <- c('artifact')
+i <- 'RDP_Class'
+for (i in ranks){
+  levels <- as.character(unique(taxa[,i]))
+  for (el in levels){
+   n_occur <- grep(el, taxa[,i], fixed=T)
+   #n_occur <- grep("Synergistia", taxa[,i], fixed=T)
+   new_row <-colSums(tab[n_occur,])
+   counts_by_rank <- rbind(counts_by_rank,new_row)
+     if ( i == 'RDP_Kingdom'){ 
+    prefix <- 'k__'}
+    else if ( i == 'RDP_Phylum'){
+    prefix <- 'p__'} 
+    else if ( i == 'RDP_Class'){
+    prefix <- 'c__'}
+    else if ( i == 'RDP_Order'){
+    prefix <- 'o__'}
+    else if  ( i == 'RDP_Family'){
+    prefix <- 'f__'}
+    else if  ( i == 'RDP_Genus'){
+    prefix <- 'g__'}
+    else { prefix <- 's__'}
+   complete_name <- get_higher(i,prefix,el)
+   names_for_rows <- c(names_for_rows,complete_name)
+     
+   }
+}
+
+rownames(counts_by_rank) <- names_for_rows
+counts_by_rank <- remove_missing(counts_by_rank)
+counts_by_rank_cleared <- counts_by_rank[-which(rowSums(counts_by_rank) == 0),]
+
+#### CHECK! === SUM of each rank should be equal
+for (i in ranks){
+  if ( i == 'RDP_Kingdom'){ 
+    prefix <- 'k__'}
+    else if ( i == 'RDP_Phylum'){
+    prefix <- 'p__'} 
+    else if ( i == 'RDP_Class'){
+    prefix <- 'c__'}
+    else if ( i == 'RDP_Order'){
+    prefix <- 'o__'}
+    else if  ( i == 'RDP_Family'){
+    prefix <- 'f__'}
+    else if  ( i == 'RDP_Genus'){
+    prefix <- 'g__'}
+    else { prefix <- 's__'}
+  grep(prefix,rownames(counts_by_rank_cleared), fixed=T)
+  print(prefix)
+  print(colSums(counts_by_rank_cleared))
+}
+
+
+j <- 1
+get_higher <- function(i,prefix,el) {
+  rank.col.ind <- grep(i, ranks, fixed= T)
+  name_no_prefix = str_remove(el,prefix) # str_split_fixed(str_remove(el,prefix),'\\(',n=2)[,1]
+  #print(name_no_brakets)
+  pos <- grep(name_no_prefix , as.character(taxa[,rank.col.ind]), fixed=T)[1]     
+  rank_string <- paste0(prefix,el)
+  #print(taxa[pos,rank.col.ind-1])
+  while ( rank.col.ind > 2){
+    higher_rank <- as.character(taxa[pos,rank.col.ind-1])
+    rank.col.ind <- rank.col.ind-1
+    rank_string <- paste0(higher_rank,';',rank_string)
+    }
+  el <- rank_string
+return(el)
+}
+
+write.table(counts_by_rank_cleared,'~/microBio/ISL_VRF/ONT/16Slibmobile_full/hierarchical_bysample_count_table_REC.tsv',sep='\t' ,quote=F, row.names = T)
+
+
+########################################### this is the implementation having the sum of all the samples!
+
+#i <- 'RDP_Species'
+#prefix <- 's__' 
+all <-data.frame()
+for (i in ranks[1:7]){
+  rank <- plyr::ddply(prevdf, i, function(df){sum(df$TotalCount)})
+  if (colnames(rank)[1] == 'RDP_Kingdom'){ 
+    prefix <- 'k__'}
+    else if (colnames(rank)[1] == 'RDP_Phylum'){
+    prefix <- 'p__'} 
+    else if  (colnames(rank)[1] == 'RDP_Class'){
+    prefix <- 'c__'}
+    else if  (colnames(rank)[1] == 'RDP_Order'){
+    prefix <- 'o__'}
+    else if  (colnames(rank)[1] == 'RDP_Family'){
+    prefix <- 'f__'}
+    else if  (colnames(rank)[1] == 'RDP_Genus'){
+    prefix <- 'g__'}
+    else { prefix <- 's__'} 
+  colnames(rank)<- c('Rank','Read_count')
+  rank[,1] <- paste0(prefix ,as.character(rank[,1]) )
+  rank <- get_higher_ranks(i,prevdf,rank)
+  all<- rbind(all,rank)
+}
+
+
+#all.final <- get_higher_ranks(i,prevdf,rank)
+
+#j <- 1
+get_higher_ranks <- function(i,prevdf,rank) {
+  for (j in seq(1,dim(rank)[1],1)){
+    rank.col.ind <- grep(i, colnames(prevdf))
+    pos <- grep(str_split_fixed(str_remove(rank[j,1],prefix),'\\(',n=2)[,1], as.character(prevdf[,rank.col.ind]))[1]     #prevdf[grep('28L_sp1(RS_GCF_000177555.1)',prevdf$RDP_Species),]
+    #subset(prevdf,RDP_Species == rank[j,1])
+    rank_string <- rank[j,1]
+    #n <- 1
+    while ( rank.col.ind > 2){
+      higher_rank <- as.character(prevdf[pos,rank.col.ind-1])
+      rank.col.ind <- rank.col.ind-1
+      rank_string <- paste0(higher_rank,';',rank_string)
+      }
+    rank[j,1] <- rank_string
+    }
+  return(rank)
+}
+all.ranks.rec <- all # all rec ranks sorted in a hierarchical way
+
+
+write.table(all.ranks.rec,'~/microBio/ISL_VRF/ONT/16Slibmobile_full/hierarchical_allsamples_count_table_REC.tsv', quote=F, row.names = F)
+all.ranks.vag <- all
+```
+
+
+```{r}
+
+```
+
+
+
+```{r}
+
+tree <- read.tree('~/microBio/ISL_VRF/ONT/16Slibmobile_full/tree.nwk')
+physeq_tree <- merge_phyloseq(physeq,tree)
+pruned <- prune_taxa(taxa_sums(physeq_tree) > 0.1 , physeq_tree) # taxa that you wanna keep
+#----------------------------------------------------------------------------
+# DON'T REREFY!!!
+#rarefied <- rarefy_even_depth(physeq_tree,rngseed=394582)
+
+# IF NECESSARY USE THIS METHOD FROM DESEQ
+# Use `~1` as the experimental design so that the actual design doesn't
+# influence your tranformation.
+GPdds = phyloseq_to_deseq2(physeq_tree, ~1)
+GPdds = DESeq2::estimateSizeFactors(GPdds)
+GPdds = DESeq2::estimateDispersions(GPdds, fitType = "local")
+# plotDispEsts(GPdds)
+#Now perform the variance-stabilizing transformation and replace the original OTU abundances in a #copy of GP with them. We'll call the copy GPvst.
+GPvst = physeq_tree
+otu_table(GPvst) <- otu_table(DESeq2::getVarianceStabilizedData(GPdds), taxa_are_rows = TRUE)
+OTUnorm <- otu_table(GPvst)
+#rlog(object, blind = TRUE, intercept, betaPriorVar, fitType = "parametric")
+#----------------------------------------------------------------------------
+physeq_tree
+
+plot_tree(pruned, nodelabf=nodeplotboot(0,0,0), shape='TYPE', size= 'Abundance',
+                    color="SAMPLE", 
+                    label.tips="RDP_Genus", text.size=2, base.spacing=0.02,
+                  ladderize="left")+
+  scale_shape_manual(values=c(18,20))+
+  scale_color_manual(values=c('darkblue',tol.rainbow(4),kelly(5),'tomato','darkgreen','steelblue',brewer.brbg(4),brewer.pastel1(3),ocean.thermal(3),ocean.phase(3))) #+ coord_polar(theta="y")
+ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/phyloseq_tree_genus_pruned.png', width = 17, height = 52, limitsize = F)
+
+
+### attempt
+abn <- psmelt(pruned) # to modify phyloseq object as data.frame
+subset(abn, Sample == 'MOB.022.Vag.R1.fastq') %>% arrange(desc(Abundance)) %>% top_n(1)
+
+p <- rarefied %>% phy_tree() %>% ggtree(ladderize= T)+geom_tippoint(aes(color=SAMPLE), size=1.5)
+facet_plot(p, 
+           panel="Abundance", # what's beside the tree?
+           data=abn, 
+           geom=geom_joy, 
+           mapping = aes(x=Abundance,fill=abn$SAMPLE), color='grey80', lwd=.3)
+
+#### example
+ggtree(tree1, layout = "rectangular") + geom_text2(data=d, aes(subset=!isTip, label=label, color="isTip"), hjust=1) + geom_tiplab(size=3, aes(angle=0)) + scale_color_manual(values=c("red", "firebrick")) + geom_hilight(22, "brown") + geom_hilight(20, fill = "steelblue") + ggtitle("Protein Sequences correlation")
+
+
+info <- read.delim('~/microBio/ISL_VRF/ONT/16Slibmobile_full/joined_DECIPHER_RDP_distotu3_count_table.tsv', sep='\t') %>% select(matches('RDP|DECIPHER|seq')) 
+p <- ggtree(tree) %<+% info
+p +
+  #geom_tiplab(geom='label')+
+  geom_text(aes(label=RDP_Genus))
+  
+```
+
+# OUT OF SparCC --> correlations and network 
+
+```{r}
+library(dplyr)
+library(tidyr)
+
+mat <- read.delim(file='~/microBio/ISL_VRF/ONT/16Slibmobile_full/fastSPAR/median_correlation.tsv', sep='\t', check.names = F)
+corr <- mat %>% pivot_longer(!OTUID , names_to = "corrOTU", values_to = "corr.value")
+
+pvals <-read.delim(file='~/microBio/ISL_VRF/ONT/16Slibmobile_full/fastSPAR/pvalues.tsv', sep='\t', check.names = F)
+sig <- pvals %>% pivot_longer(cols= !OTUID , names_to = "corrOTU", values_to = "p.value")
+th.sig <- sig %>% filter(p.value < 0.001)
+
+filt.corr <- corr %>% right_join(th.sig, by=c('OTUID','corrOTU')) # no negative correlations
+
+filt.corr %>% filter(corr.value > 0) %>% summarise(m=median(corr.value))
+
+##### give relevant names
+# these classifications are taken from rdp
+class <- read.delim('~/microBio/ISL_VRF/ONT/16Slibmobile_full/distotu3_rdp_map_tree_labels.tsv', sep='\t') %>% select(seq_header, x)
+class$genus<- stringr::str_split_fixed(class$x, ';', n=7)[,c(6)]
+
+class %>% filter( x == 'Bacteria;NA;NA;NA;NA;NA;NA') # 26 sequences are unclassified
+map.1 <- filt.corr %>% left_join(class, by=c('OTUID' = 'seq_header'))
+colnames(map.1) <- c( colnames(map.1)[1:4],'OTUID.taxon', 'OTUID.genus' ) 
+map.1 %>% filter( OTUID.taxon == 'Bacteria;NA;NA;NA;NA;NA;NA') %>% select(OTUID) %>% n_distinct()
+
+map.2 <- map.1 %>% left_join(class, by=c('corrOTU' = 'seq_header'))
+colnames(map.2) <- c( colnames(map.2)[1:6],'corrOTU.taxon', 'corrOTU.genus' )
+map.2 %>% filter(corrOTU.taxon == 'Bacteria;NA;NA;NA;NA;NA;NA') %>% select(OTUID) %>% n_distinct()
+map.2 %>% filter(corr.value > 0.5)
+# 6 Bacteria;NA;NA;NA;NA;NA;NA survived
+
+#map.2 %>% filter(corrOTU.taxon == "Bacteria;NA;NA;NA;NA;NA;NA")
+#map.2 %>% filter(OTUID.taxon == "Bacteria;NA;NA;NA;NA;NA;NA")
+
+tonetwork <- filt.corr %>% select(!p.value) %>% pivot_wider(names_from=corrOTU,values_from=corr.value, values_fill=0) %>% tibble::column_to_rownames(var = "OTUID")
+
+#OTUID.genus, corrOTU.genus
+write.table(map.2,'~/microBio/ISL_VRF/ONT/16Slibmobile_full/fastSPAR/high_correlation.tsv', sep='\t', quote=F, row.names=F)
+
+map.2 %>% filter( OTUID =='17726dad3e696da82e9c0ffcc84ebe72' )
+
+#map.2 %>% group_by(corrOTU.taxon) %>% summarise(tax=n_distinct(corrOTU.taxon))
+#rownames(map.2) <- map.2$corrOTU.taxon
+
+#tonetwork[is.na(tonetwork)] <- 0
+
+#which(tonetwork < 0)
+
+dim(tonetwork)
+
+```
+
+```{r}
+library(igraph)
+library(purrr)
+#cor_mat <- cor(mtcars)
+cor_g <- graph_from_adjacency_matrix(as.matrix(tonetwork), mode='undirected', weighted = 'correlation')
+cor_edge_list <- as_data_frame(cor_g, 'edges')
+#only_sig <- cor_edge_list[abs(cor_edge_list$correlation) > .75, ]
+my_g <- graph_from_data_frame(cor_edge_list, directed = F, vertices = class) # class has to have node labels as first column
+
+library(ggraph)
+ggraph(my_g, layout='fr') +  #"fr"
+  #geom_edge_density(edge_fill="#69b3a2") +
+  geom_edge_link(edge_colour="grey", edge_alpha=0.7, edge_width=0.8) +
+  geom_node_point(aes(color=genus), show.legend = F) +
+  #geom_node_text(aes(label = genus), show.legend = F)
+  theme_void() +
+  theme(
+    legend.position="none",
+    plot.margin=unit(rep(1,4), "cm")
+  ) 
+# This graph has all the 0.0 correlations so we have to extract the significant 138 nodes 
+######################################## create a subgraph
+clu <- components(my_g)
+groups(clu)[[29]]
+#Induce a subgraph out of the first community
+my_g_sub <- induced.subgraph(my_g,groups(clu)[[29]])
+
+dg <- degree(my_g_sub)
+conn <- merge(as.data.frame(dg), class, by.x='row.names', by.y='seq_header', all.x=T)
+conn <- conn %>% mutate(colored=case_when(dg > 2 ~ genus, dg <= 2 ~ 'Other'))
+conn <- conn %>% mutate(rel_tax=case_when(colored == 'NA'~ stringr::str_split(x, ";") %>% map_chr(., 5), is.na(colored) == F ~ colored))
+conn %>% filter( rel_tax == 'NA')
+conn %>% filter(rel_tax == 'Corynebacterium')
+
+my_g_sub_meta <- graph_from_data_frame(as_data_frame(my_g_sub), directed = F, vertices = conn)
+
+ggraph(my_g_sub_meta, layout = 'fr') +  #"fr"
+  #geom_edge_density(edge_fill="#69b3a2") +
+  geom_edge_link(edge_colour="grey", edge_alpha=0.7, edge_width=0.8) +
+  geom_node_point(aes(color=colored,size=dg), show.legend = F) +
+  geom_node_label(aes(label = rel_tax, size=dg), show.legend = F, repel=T)+
+  theme_void()+
+  theme(legend.position="bottom") +
+  guides(size = guide_legend(direction = 'vertical')) # color = guide_legend(order = 2)
+ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/fastSPAR/sub_cluster.png', height=20, width=25)
+
+```
+
+```{r}
+conn %>% filter(rel_tax == 'Corynebacterium')
+conn %>% filter(rel_tax == 'Ruminococcus_C')
+```
+
+```{r}
+
+filt.corr %>% 
+ ggplot(aes(OTUID, corrOTU, fill=corr.value, label=round(corr.value,2))) +
+ geom_tile() + 
+ labs(x = NULL, y = NULL, fill = "Correlation", title="SparCC correlation matrix", subtitle="Only significant correlations are shown (p.value < 0.001)") + 
+ scale_fill_gradient2(mid="#FBFEF9",low="#0C6291",high="#A63446", limits=c(-1,1)) +
+ #geom_text() +
+ theme_ipsum() +
+ scale_x_discrete(expand=c(0,0)) + 
+ scale_y_discrete(expand=c(0,0)) +
+ theme(text=element_text(family="Roboto"), axis.text.x = element_blank(), axis.text.y = element_blank() )
+ggsave('~/microBio/ISL_VRF/ONT/16Slibmobile_full/fastSPAR/correlation_tiles.png', height=15, width=20)
 ```
 

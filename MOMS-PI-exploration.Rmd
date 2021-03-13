@@ -1,0 +1,1231 @@
+---
+title: "Untitled"
+author: "Chiara Mazz.oni"
+date: "26 luglio 2020"
+output: html_document
+---
+
+```{r}
+setwd('~/microBio/MOMS-PI')
+```
+
+```{r}
+require(ggplot2)
+#library(devtools)
+#install_github("mtennekes/tabplot")
+#library(tabplot)
+library(rentrez)
+library(dplyr)
+library(stringr)
+library(ggpubr)
+library(tidyr)
+'%!in%' <- function(x,y)!('%in%'(x,y))
+
+all.samples <- read.delim('/home/chiara/microBio/MOMS-PI/SraRunTable.txt', sep=',') #Run column 
+all.samples <- all.samples %>% select(Run,analyte_type,BioSample,histological_type)
+
+
+SRR <- read.delim('/home/chiara/microBio/MOMS-PI/wgs.ids', sep='\t', col.names = 'IDS')
+SRR <- SRR %>% distinct()
+#dbgap <-c()
+#string_del <- 'BioSample'
+#for (i in SRR){
+#  summary <- as.character(entrez_fetch(db="sra", id=i, rettype='xml'))
+#  smn.id <- unlist(strsplit(unlist(strsplit(unlist(strsplit(summary, string_del, fixed=T ))[2], '</EXTERNAL', fixed=T))[1], '>'))[2]
+#  dbgap <- c(dbgap,smn.id)
+#} 
+
+#ids.combo <- cbind(SRR,dbgap)
+#dim(ids.combo)
+
+my.samples <- merge(SRR,all.samples, all.x=T, by.x='IDS', by.y='Run')
+
+
+followup <- read.delim('~/microBio/MOMS-PI/tables/phenotype_followUpSurvey.txt', sep='\t', skip=10 )
+discharge <- read.delim('~/microBio/MOMS-PI/tables/phenotype_deliveryAndDischargeSurvey.txt', sep='\t', skip=10 )
+table(discharge$delivery_csection)
+
+mom.clinical <- read.delim('~/microBio/MOMS-PI/tables/phenotype_clinical.txt', sep='\t', skip=10 )
+sra <- read.delim('~/microBio/MOMS-PI/tables/MOMS_PI_Sample.MULTI.txt', sep='\t', skip=10 )
+samples <- read.delim('~/microBio/MOMS-PI/tables/MOMS_PI_Sample_Attributes.txt', sep='\t', skip=10 )
+dim(samples)
+
+sra.my.samples <- merge(sra,my.samples, all.y=T , by.x='BioSample.Accession',by.y='BioSample')
+tot.info.samples <- merge(samples,sra.my.samples,by='dbGaP_Sample_ID', all.y=T) # all WGS
+tot.info.samples <- tot.info.samples %>% select(dbGaP_Sample_ID,dbGaP_Subject_ID,IDS,BODY_SITE,ANALYTE_TYPE,omic,visit_num,visit_ID,BioSample.Accession) 
+
+table(tot.info.samples$BODY_SITE)
+
+subset(tot.info.samples, dbGaP_Subject_ID == '2442707')
+
+wts.vag <- subset(tot.info.samples,ANALYTE_TYPE == 'RNA')
+write.table(wts.vag,'~/microBio/MOMS-PI/metatranscriptomics.samples.tsv',row.names = F, sep='\t', quote=FALSE)
+wgs.vag <- subset(tot.info.samples,ANALYTE_TYPE == 'DNA'& BODY_SITE == 'Vagina')
+write.table(wgs.vag ,'~/microBio/MOMS-PI/metagenomics.vag.samples.tsv',row.names = F, sep='\t', quote=FALSE)
+wgs.stool <- subset(tot.info.samples, ANALYTE_TYPE == 'DNA' & BODY_SITE == 'Stool')
+write.table(wgs.stool ,'~/microBio/MOMS-PI/metagenomics.stool.samples.tsv',row.names = F, sep='\t', quote=FALSE)
+#table(samples$BODY_SITE)
+
+
+test.moms <- moms.pi %>% select(dbGaP_Subject_ID,baby_breastfed,baby_respiratory,baby_sick,sample_type_desc,antibiotics_since_last_visit)
+
+pdf("table.plot.summary.pdf", height = 10, width = 30) 
+tableplot(test.moms, fontsize = 10, legend.lines = 8)
+dev.off() 
+
+```
+
+```{r}
+mgen.species <- read.delim('/home/chiara/microBio/MOMS-PI/mgenomics/merged_mpa3_vag_species.txt', sep='\t')
+rownames(mgen.species)<- mgen.species$clade_name
+mgen.species$clade_name <- NULL
+mgen.species$NCBI_tax_id <- NULL
+
+#prevdf <- data.frame(prevalence=rowSums(mgen.species>0)) #count row in colums = sum of columns
+# APPROACH WITHOUT HEURISTICS ## not sure this will not skew results, it's safer taking a conservative threshold
+#prevalenceThreshold <- 0.05 * ncol(mgen.species) #5% prevalence in our dataset is 5 samples 
+#prevalenceThreshold
+#keepTaxa <- rownames(mgen.species)[(prevdf$prevalence >= prevalenceThreshold)]
+## do the filtering
+#prevalence.proof <- mgen.species[rownames(mgen.species) %in% keepTaxa,]
+wgs.vag <- read.delim('~/microBio/MOMS-PI/mgenomics/metagenomics.vag.samples.tsv', sep='\t')
+table(wgs.vag$visit_num)
+wgs.vag$new.id <- paste0(wgs.vag$dbGaP_Subject_ID,'_',wgs.vag$visit_num)
+#sub <- wgs.vag %>% select(IDS,new.id)
+dbGAP_ids <-colnames(mgen.species)
+
+for (i in seq(1,ncol(mgen.species),1) ){ #[2:ncol(mpa3.results.species)]){
+  id <- colnames(mgen.species)[i]
+  sub <-wgs.vag[wgs.vag$IDS == id,]
+  sub.id <- sub$new.id[1]
+  colnames(mgen.species)[i] <- sub.id }
+
+samples_visit <-colnames(mgen.species)
+
+
+write.table(mgen.species,'~/microBio/MOMS-PI/mgenomics/metagenomics.vag.samples.visit.tsv',row.names = T, sep='\t',quote=F)
+
+wgs.vag <- read.delim('~/microBio/MOMS-PI/mgenomics/metagenomics.vag.samples.tsv', sep='\t')
+
+```
+# C section or Vaginal
+```{r}
+survey <-read.delim('~/microBio/MOMS-PI/tables/phenotype_deliveryAndDischargeSurvey.txt', sep='\t',skip=10)
+del.info <-survey %>% select(dbGaP_Subject_ID,delivery_csection) %>% mutate(id=paste0('X',dbGaP_Subject_ID)) %>% mutate(delivery=case_when(delivery_csection=='Yes'~ 'C-section', delivery_csection=='No'~ 'Vaginal'))
+
+upto5 <- read.delim('upto.full.5visits.tsv',sep='\t')
+
+del.info.pivoted.upto5<-merge(del.info,upto5,by='id', all.y=T) %>% select(id,delivery,X1,X2,X3,X4,X5)
+del.info.pivoted.upto5 <- del.info.pivoted.upto5[-c(which(duplicated(del.info.pivoted.upto5$id) == T)),]
+del.info.pivoted.upto5$mum_code <- paste0(rep('mum_'),seq(1,70,1))
+
+write.table(del.info.pivoted.upto5,file="subject.delivery.pivoted.70samples.tsv",sep='\t', row.names=F, quote=F)
+```
+##### RUN EVERY TIME!
+```{r}
+mgen.vag <- read.delim('~/microBio/MOMS-PI/mgenomics/metagenomics.vag.samples.visit.tsv', sep='\t')
+wgs.vag <- read.delim('~/microBio/MOMS-PI/mgenomics/metagenomics.vag.samples.tsv', sep='\t')
+#subset(wgs.vag,IDS=='SRR6745071')
+mgen.vag$taxon <- rownames(mgen.vag)
+#grep('SRR6743909',colnames(mgen.vag))
+#mgen.vag[,c(926:927)]
+mgen.long <- tidyr::gather(mgen.vag,sample,abundance,1:ncol(mgen.vag)-1)
+
+mgen.long$visit <- as.numeric(str_split_fixed(as.character(mgen.long$sample), "_",n=3)[,3])
+mgen.long$id <- str_split_fixed(as.character(mgen.long$sample), "_",n=2)[,1]
+mgen.long$genus <- as.factor(str_split_fixed(as.character(mgen.long$taxon), "_",n=2)[,1])
+mgen.long$species <- as.factor(str_split_fixed(as.character(mgen.long$taxon), "_",n=2)[,2])
+length(unique(mgen.long$id)) # 234 donne
+#mgen.long <- mgen.long %>% mutate(visit = forcats::fct_relevel(visit, "Visit_1", "Visit_2", "Visit_3","Visit_4","Visit_5","Visit_6","Visit_7","Visit_8","Visit_9","Visit_10","Visit_11","Visit_12"))
+mgen.long$visit.factor <- as.factor(str_split_fixed(as.character(mgen.long$sample), "_",n=3)[,3])
+
+more.0 <- subset(mgen.long, abundance > 0.1)
+n.visits <- more.0 %>% group_by(id,visit) %>% distinct(sample) %>% ungroup(visit) %>% dplyr::mutate(nvisits=dplyr::n())
+n.visits$dbGaP_Subject_ID <- as.numeric(str_replace_all(n.visits$id,'X',''))
+n.visits %>% filter(nvisits == 5) %>% distinct(id) # 2 mums have 8 samples -> 4 mums have 7 samples --> 25 mums have 6 samples --> 53 mums have 5 samples
+n.visits$nvisits <- as.factor(n.visits$nvisits)
+dist.records <- n.visits %>% group_by(nvisits) %>% distinct(id) %>% tally()
+```
+
+# from the above chunks
+```{r}
+########################################################################### PLOT fig1C
+ggplot(data=dist.records,aes(x=nvisits,y=n))+
+  geom_bar(stat='identity',fill='steelblue' ,color='blue')+
+  geom_text(aes(label=n), vjust=-0.5, size=3)+
+  labs(x='N° of samples',y='N° of mothers')
+ggsave('distribution.of.records.pdf',width= 7,height=5)  
+###########################################################################
+
+#subset(n.visits, id == 'X2442977')
+#subset(wgs.vag, dbGaP_Subject_ID == '2442977')
+wgs.vag <- wgs.vag %>% mutate(sample= paste0('X',dbGaP_Subject_ID,'_',visit_num))
+forpivot.samples <- merge(n.visits, wgs.vag,by='sample')
+
+forpivot <- forpivot.samples %>% select(IDS,visit,sample,id,nvisits)
+pivoted.visits <- pivot_wider(forpivot,id,names_from=visit,values_from =IDS)
+#subset(pivoted.visits, id == "X2442568")
+
+write.table(pivoted.visits,file='pivoted.visits.tsv',sep='\t',row.names = F)
+
+more.0 <- subset(mgen.long, abundance > 0.1 )#& visit != '8' & visit != '9' &visit != '10'& visit != '11' & visit != '12')
+######################### STATS per woman
+more.0 %>% select(sample,id) %>% unique() %>% group_by(id) %>% summarise(count=n()) %>% summarise(mean=mean(count))
+
+######################## prevalence overall
+#all.samples <- mgen.long %>% select(sample) %>% distinct(sample)
+
+#just.more0 <- more.0 %>% select(sample) %>% distinct(sample)
+#unclassified <- setdiff(all.samples,just.more0) 
+#tomerge <- data.frame(sample=str_split_fixed(unclassified$sample,n=2 ,'_')[,1])
+#merge(pivoted.visits,tomerge,by.x='id',by.y='sample',all.y=T)
+
+#more.0 %>% select(sample) %>% n_distinct(sample)
+#more.0 %>% select(taxon) %>% group_by(taxon) %>% count() %>% arrange(desc(n)) %>% filter(n > 100) %>% select(taxon)
+
+```
+# barplot on mean relative abundances
+```{r}
+more.0 <- subset(mgen.long, abundance > 5 ) # 0.1
+subset(more.0, genus=='Rhizobium')
+more0.mean <- more.0 %>% group_by(visit.factor,taxon) %>% summarize(mean_ab=mean(abundance)) #visit.factor, mutate
+more0.mean$noperc <- more0.mean$mean_ab/100
+
+rescaled_perc <- more0.mean# %>% 
+#  group_by(visit.factor) %>% 
+#mutate(percentage = noperc / sum(noperc)*100)
+
+rescaled_perc$genus <- str_split_fixed(rescaled_perc$taxon,'_', n=2)[,1]
+#filter <-subset(rescaled_perc, percentage > 1)
+
+allvisits <- subset(mgen.long, abundance > 5) # 0.1
+allvisits <- allvisits %>% group_by(visit.factor) %>% mutate(women=n_distinct(id))
+only.counts.all <- allvisits %>% select(visit.factor, women) %>% distinct()
+df.all <- allvisits %>%  group_by(visit.factor) %>% count(taxon) %>% arrange(visit.factor, desc(n))
+n.df.all <- merge(df.all,only.counts.all, by='visit.factor' ,all.x=T)
+n.df.all$taxon <- as.factor(n.df.all$taxon)
+n.df.all$prevalence <- (n.df.all$n / n.df.all$women)*100
+
+n.df.all$species.visit <- paste0(n.df.all$taxon,'_v',n.df.all$visit.factor)
+rescaled_perc$species.visit <- paste0(rescaled_perc$taxon,'_v',rescaled_perc$visit.factor)
+
+prev.perc<- merge(n.df.all,rescaled_perc, by='species.visit',all=T)
+prev.perc <- prev.perc %>% mutate(visit.factor.x = forcats::fct_relevel(visit.factor.x, "1", "2", "3","4","5","6","7","8","9","10","11","12"))
+
+prev.perc <- prev.perc %>% mutate(noperc_adj = noperc * prevalence)
+prev.perc <- prev.perc %>% group_by(visit.factor.x) %>% mutate(percentage = noperc_adj / sum(noperc_adj)*100 )
+
+#subset(prova,genus == 'Xylella')
+
+prev.perc <- prev.perc %>% mutate(cat= case_when(percentage < 10 ~ "Z", percentage >= 10 ~ genus)) # 2
+
+prev.perc %>% select(species.visit, cat, prevalence, mean_ab, percentage)
+prev.perc$label <- paste0(stringr::str_extract(prev.perc$genus,'^[A-Z]'),'_', stringr::str_split_fixed(prev.perc$taxon.x,'_',2)[,2])
+
+#unique(prev.perc$cat)
+names_mean <- c("Atopobium_vaginae","Gardnerella","Human_alphaherpesvirus","Lactobacillus","Prevotella","Streptococcus","Other < 2%")
+
+#names_median <- c("Atopobium_vaginae","Gardnerella","Human_alphaherpesvirus","Lactobacillus","Prevotella","Streptococcus","Other < 2%")
+
+cols_mean <-c('#efdb23','#68b740','#c40000','#358358','#ca57c1','#fb4300','#008dc2')#,'#8c89ca','#5e3a73','#b55749','#5b0d08')
+
+#cols_median <-c('#efdb23','#68b740','#c40000','#358358','#ca57c1','#fb4300','#008dc2')#,'#8c89ca','#5e3a73','#b55749','#5b0d08')
+
+subset(prev.perc,genus == 'Rhizobium')
+subset(prev.perc,genus == 'Haemophilus')
+
+
+prev.perc$visit.factor.x <- as.numeric(prev.perc$visit.factor.x)
+ord<-prev.perc %>% filter(visit.factor.x <= 7) %>% arrange(desc(cat))
+ord$visit.factor.x <- as.factor(as.character(ord$visit.factor.x))
+ord %>% group_by(visit.factor.x) %>% summarize(sum=sum(percentage))
+which(is.na(ord$percentage))
+
+label_data <- ord %>% select(visit.factor.x, women) %>% distinct()
+annot_data <- ord  %>% filter(percentage > 5) #%>% #2 select(visit.factor.x,percentage,cat,label) %>% group_by(visit.factor.x) %>% mutate(pos_label=cumsum(percentage)-0.5*percentage)
+
+
+ggplot(ord,aes(x=percentage,y=visit.factor.x,fill=cat))+
+  geom_bar(stat='identity', show.legend =T )+
+  coord_flip()+
+  scale_fill_manual(values=cols_mean,labels=names_mean,name='Taxon')+ #values=cols,label=names_mean,labels=cat
+  labs(x='Mean relative abundance [%]',y='Visit N°')+
+  theme_bw()+
+  geom_text(data=label_data,aes(x=100,y=visit.factor.x,label=women), vjust=-0.5, size=5, inherit.aes = F,show.legend = F)+
+  geom_label_repel(data = annot_data, aes(x=pos_label,y=visit.factor.x,fill=cat,size=0.5,label=label), inherit.aes = F, show.legend = F)
+ggsave('mean.relative.abundance.adjusted.png',width=20,height=10, limitsize = FALSE)  
+
+
+################################################# barplot only on lactobacillus
+lacto <- subset(ord,genus == 'Lactobacillus')
+lacto.ref <-lacto %>% group_by(visit.factor.x) %>% mutate(sum_perc_on_tot=sum(percentage))
+lacto.ref <- lacto.ref %>% select(species.visit,visit.factor.x,genus,sum_perc_on_tot,prevalence,percentage,taxon.x,label,women) %>% mutate(noperc=percentage/100 ) %>% mutate(adj_perc=(noperc/sum(noperc)*100 ))
+lacto.label <- lacto.ref %>% select(visit.factor.x,sum_perc_on_tot, women) %>% distinct()
+
+library(RColorBrewer)
+library(shades)
+lacto.ref %>% group_by(visit.factor.x) %>% summarise(sum(adj_perc))
+colors <- c(brewer.pal(7, "Dark2"),brightness(brewer.pal(3, "Set1"), 0.4),brightness(brewer.pal(3, "Set2"), 0.4))
+
+unique(lacto.ref$taxon.x)
+                             
+ggplot(lacto.ref,aes(x=adj_perc,y=visit.factor.x,fill=taxon.x))+
+  geom_bar(stat='identity', show.legend =T )+
+  coord_flip()+
+  scale_fill_manual(values=colors,name='Taxon')+ #values=cols,labels=cat,
+  labs(x='Mean relative abundance [%]',y='Visit N°')+
+  theme_bw()+
+  geom_text(data=lacto.label,aes(x=100,y=visit.factor.x,label=paste0('within ',round( sum_perc_on_tot,2),' % on ', women,' mums')), vjust=-0.5, size=3, inherit.aes = F,show.legend = F)
+ggsave('lacto.mean.relative.abundance.adjusted.png',width=20,height=10, limitsize = FALSE) 
+
+
+###################### pcoa colored by lacto
+
+
+##### dot_plot with correlation between prevalence and percentage
+library(lemon)
+library(ggrepel)
+
+subset(prev.perc,genus == 'Veillonellaceae')
+prev.perc$visit.factor.x <- as.numeric(prev.perc$visit.factor.x)
+prev.perc <-subset(prev.perc, visit.factor.x <= 5)
+ggplot(prev.perc,aes(x=prevalence,y=percentage, label=label))+
+  geom_point()+
+  #geom_smooth(method = "lm")+
+  geom_text_repel(aes(x=prevalence,y=percentage,fill=cat,size=0.5,label=label))+
+  scale_y_log10()+
+  #geom_text(aes(fontface=0.5,vjust=-0.9,hjust=+0.1))+
+  facet_rep_wrap(~visit.factor.x, scales='free',ncol=5)+
+  labs(y='log10(Median relative abundance [%])', x='prevalence [%]')
+  
+ggsave('pattern.prevalence.percentage5zoom.png',width= 60,height=15, limitsize = FALSE)
+
+```
+# mapping ids for the first time
+```{r}
+
+sps <- c('Lactobacillus_iners','Lactobacillus_crispatus','Lactobacillus_jensenii','Lactobacillus_gasseri',"Gardnerella_vaginalis","Atopobium_vaginae","Lactobacillus_phage_Lv_1","Prevotella_timonensis")
+mgen.long.meta <- merge(mgen.long,ethni,by.x='id',by.y='dbGaP_Subject_ID', all.x=T)
+most.prev <- subset(mgen.long.meta,taxon %in% sps)
+most.prev$mum_code_v <- paste0(most.prev$mum_code,'_v',as.character(most.prev$visit.factor))
+#to.mat <- most.prev %>% select(mum_code_v,abundance,taxon)
+
+mgen.vag.most.prev <- subset(mgen.vag,rownames(mgen.vag) %in% sps)
+
+mgen.vag.most.prev$taxon <- NULL
+#mgen.vag.most.prev$
+#subset(most.prev,id == 'X2442777')
+all.samples.orig <- as.data.frame(colnames(mgen.vag.most.prev))
+#colnames(all.samples) <- 'mum_code_v'
+
+
+for (i in seq(1,ncol(mgen.vag.most.prev),1) ){ #[2:ncol(mpa3.results.species)]){
+  id <- colnames(mgen.vag.most.prev)[i]
+  sub <-most.prev[most.prev$sample == id,]
+  sub.id <- sub$mum_code_v[1]
+  if (startsWith(sub.id,'NA') == TRUE){
+    colnames(mgen.vag.most.prev)[i] <- id
+  }else{
+  colnames(mgen.vag.most.prev)[i] <- sub.id
+  }
+}
+
+all.samples <- as.data.frame(colnames(mgen.vag.most.prev))
+colnames(all.samples) <- 'mum_code_v'
+to.assign.ids <- merge(all.samples,most.prev,by.x='mum_code_v',by.y='mum_code_v', all.x=T)
+to.replace <- as.vector(unique(str_split_fixed(to.assign.ids$mum_code_v[grep('X',to.assign.ids$mum_code_v)],'_',n=2)[,1]))
+new.ids <- data.frame(na_id=to.replace, mum_code=paste0(rep('mum_',164),seq(71,234,1)))
+
+for (i in seq(1,ncol(mgen.vag.most.prev),1) ){ #[2:ncol(mpa3.results.species)]){
+  id <- colnames(mgen.vag.most.prev)[i]
+  x.sample <- str_split_fixed(id,n=2,'_')[1]
+  visit <- str_split_fixed(id,n=3,'_')[3]
+  if (startsWith(x.sample,'X') == TRUE){
+    new.id<- new.ids$mum_code[which(new.ids$na_id == x.sample)]
+    complete <- paste0(new.id,'_v',visit)
+    colnames(mgen.vag.most.prev)[i] <- complete}
+}
+  
+mat.t <- as.data.frame(t(mgen.vag.most.prev))
+annotation_r <- rownames(mat.t)
+
+```
+heatmap code
+```{r}
+library(tidyr)
+library(pheatmap)
+library(RColorBrewer)
+
+sps <- c('Lactobacillus_iners','Lactobacillus_crispatus','Lactobacillus_jensenii','Lactobacillus_gasseri',"Gardnerella_vaginalis","Atopobium_vaginae","Lactobacillus_phage_Lv_1","Prevotella_timonensis",'Prevotella_amnii','Prevotella_bivia','Mycoplasma_hominis','Sneathia_amnii')
+
+mgen.vag.most.prev <- subset(mgen.vag,rownames(mgen.vag) %in% sps)
+
+#ph.and.prev <- rbind(mgen.vag.most.prev,mgen.vag.ph)
+mgen.vag.most.prev$taxon <- NULL
+#ph.and.prev$taxon <- NULL
+
+mgen.vag.most.prev <- mgen.vag.most.prev[-which(duplicated(mgen.vag.most.prev)== T),]
+
+i <- 1
+for (i in seq(1,ncol(mgen.vag.most.prev),1) ){ #[2:ncol(mpa3.results.species)]){
+  id <- colnames(mgen.vag.most.prev)[i]
+  sub <-ids[ids$samples_visit == id,]
+  sub.id <- as.character(sub$mum_code_v)[1]
+  #if (startsWith(sub.id,'NA') == TRUE){
+  #  colnames(mgen.vag.most.prev)[i] <- id
+  #}else{
+  colnames(mgen.vag.most.prev)[i] <- sub.id
+}
+
+
+ids <- read.delim('complete.mapping.ids.tsv',sep='\t')
+ids$sample <-  str_split_fixed(ids$samples_visit,n=2,'_')[,1]
+
+meta <- read.delim('relevant.metadata.all.samples.tsv', sep='\t')
+meta.complete <- merge(ids,meta,by.x='sample',by.y='dbGaP_Subject_ID', all.x=T)
+meta.complete <- meta.complete[-which(duplicated(meta.complete$mum_code_v)),]
+rownames(meta.complete) <- meta.complete$mum_code_v
+#annotation_row =annotation_r
+
+sub.meta.complete <- meta.complete %>% select(birthcontrol,ethnicity,birthcontrol_type,vitching, bv)
+colors<- brewer.pal(5, "Dark2") # "#1B9E77" "#D95F02" "#7570B3" "#E7298A" "#66A61E"
+brewer.pal(9, "Set1") # "#E41A1C" "#377EB8" "#4DAF4A" "#984EA3" "#FF7F00" "#FFFF33" "#A65628" "#F781BF" "#999999"
+
+annot.cols <- list('birthcontrol' = c('No' = "blue", 'Yes'="orange",'Not_sure'='white'),'ethnicity'=c('african_american'="#1B9E77",'american_indian_or_alaska_native'="#D95F02",'asian'="#7570B3",'caucasian'="#E7298A",'hispanic_or_latino'="#66A61E"),'birthcontrol_type'= c('condoms'="#E41A1C"  ,'copper_iud'="#377EB8" ,'depo'="#4DAF4A" ,'diaphram_cap'="#984EA3" ,'family_planning'= "#FF7F00",'implant'="#FFFF33" ,'patch'="#A65628" ,'pills'="#F781BF" ,'ring'="#999999" ,'withdrawal'='black'),'vitching'=c('Yes'='brown','No'='salmon'),'bv'=c('Yes'='lightblue','No'='yellow','Not_Sure'='white'))
+
+png("pheatmap-MOMS.pi.png",width = 1000,height = 1200)
+#pdf("pheatmap-MOMS.pi.png",width = 3000,height = 1200,pointsize = 40)
+heat.plot <- pheatmap(as.matrix(t(mgen.vag.most.prev)),cellheight = 1,cluster_rows= TRUE,cluster_cols= F,fontsize_row=8,fontsize_col=12,show_rownames=F,angle_col=45,border_color=TRUE, treeheight_row= 50,cutree_cols=4,annotation_row =sub.meta.complete,annotation_colors =annot.cols)
+dev.off()
+
+```
+
+
+```{r}
+library(latticeExtra)
+library(lattice)
+library(scatterplot3d)
+library(scale_color_viridis)
+
+#mgen.long$visit.factor <- as.numeric(as.character(mgen.long$visit.factor))
+mgen.long.prev <- subset(mgen.long, taxon %in% sps)
+
+# A function generating colors
+cols<-function(n) {
+   colorRampPalette(c("#FFC0CB", "#CC0000"))(20)                               
+}
+# The plot
+cloud(mgen.long.prev, panel.3d.cloud = panel.3dbars, col="white",                      
+  xbase = 1, ybase = 1, zlim = c(1, max(visit.factor)),                              
+  # No space around the bars
+  scales = list(arrows = FALSE, just = "right"), xlab = NULL, ylab = NULL,
+  col.facet = level.colors(VADeaths, at = do.breaks(range(mgen.long.prev), 20),        
+                           col.regions = cols,                                   
+                           # color ramp for filling the bars
+                           colors = TRUE),
+  colorkey = list(col = cols, at = do.breaks(range(mgen.long.prev), 20)),
+  screen = list(z = 65, x = -65))          
+#z ~ x * y
+cloud(formula = id ~ visit*abundance , data=mgen.long.prev)
+
+
+cloud(formula= abundance~visit.factor, info,panel.3d.cloud=panel.3dbars, col.facet='grey',
+      xbase=0.4, ybase=0.4, scales=list(arrows=FALSE, col=1), 
+      par.settings = list(axis.line = list(col = "transparent")))
+
+
+info <-merge(mgen.long.prev,ids,by.x='id',by.y='sample')
+info$num <- str_split_fixed(info$mum_code_v,n=3,'_')[,2]
+
+library(wesanderson)
+pal <- wes_palette("Zissou1", 100, type = "continuous")
+
+pal <- brewer.pal(n = 100, name = "YlOrRd")
+
+png("grid.png",width = 800,height = 500)
+scatterplot3d(x=info$num,z=info$abundance, y=info$visit , pch = 16, type="h")#,color=pal)#, 
+             # color=colorRampPalette(c("#FFC0CB", "#CC0000"))(12))
+dev.off()
+```
+
+
+
+# the complete mapping of samples and all ids that I've been using so far
+```{r}
+all.samples.orig
+all.samples.mum_code_v <- colnames(mgen.vag.most.prev)
+mapping.ids <- data.frame(original.id = all.samples.orig, mum_code_v = all.samples.mum_code_v)
+colnames(mapping.ids) <- c('sample','mum_code_v')
+
+dbGAP_ids <-colnames(mgen.species)
+samples_visit <- paste0('X',samples_visit) # from the first time that I changes ids, at the beginning
+final.mapping.samples <-data.frame('dbGAP_ids'= dbGAP_ids, 'samples_visit'= samples_visit,'mum_code_v' = mapping.ids$mum_code_v)
+
+write.table(final.mapping.samples, 'complete.mapping.ids.tsv',sep='\t', row.names = F, quote = F)
+```
+
+# create table for moms' metadata
+```{r}
+tab<-read.delim("subject.delivery.pivoted.70samples.tsv",sep='\t')
+
+more.del<-read.delim("~/microBio/MOMS-PI/tables/phenotype_healthHistorySurvey.txt", sep='\t',skip=10)
+colnames(more.del)
+more.del <- more.del %>% select(dbGaP_Subject_ID,mom_delivery_method,african_american,american_indian_or_alaska_native,asian, caucasian,hispanic_or_latino,native_hawaiian,conception_natural,vdischarge,vitching,bv,birthcontrol,birthcontrol_diaphram_cap,birthcontrol_condoms,birthcontrol_family_planning,birthcontrol_spermicide,birthcontrol_sponge,birthcontrol_vasectomy,birthcontrol_withdrawal,birthcontrol_tubestied,birthcontrol_depo,birthcontrol_implant,birthcontrol_copper_iud,birthcontrol_patch,birthcontrol_ring,birthcontrol_pills)
+
+more.del <- more.del %>% mutate(ethnicity=case_when(african_american == 'Yes'~ 'african_american', american_indian_or_alaska_native == 'Yes'~'american_indian_or_alaska_native',asian == 'Yes'~'asian',caucasian == 'Yes'~ 'caucasian',hispanic_or_latino == 'Yes'~ 'hispanic_or_latino', native_hawaiian == 'Yes'~'native_hawaiian'))
+
+
+more.del <- more.del %>% mutate(birthcontrol_type=case_when(birthcontrol_diaphram_cap == 'Yes'~'diaphram_cap',
+            birthcontrol_condoms == 'Yes'~'condoms',
+            birthcontrol_family_planning == 'Yes'~'family_planning',
+            birthcontrol_spermicide == 'Yes'~'spermicide',
+            birthcontrol_sponge == 'Yes'~'sponge',
+            birthcontrol_vasectomy == 'Yes'~'vasectomy',
+            birthcontrol_withdrawal == 'Yes'~'withdrawal',
+            birthcontrol_tubestied == 'Yes'~'tubestied',
+            birthcontrol_depo == 'Yes'~'depo',
+            birthcontrol_implant == 'Yes'~'implant',
+            birthcontrol_copper_iud == 'Yes'~'copper_iud',
+            birthcontrol_patch == 'Yes'~'patch',birthcontrol_ring == 'Yes'~'ring',
+            birthcontrol_pills == 'Yes'~'pills'))
+
+more.del$dbGaP_Subject_ID <- paste0('X',more.del$dbGaP_Subject_ID)
+
+selected.more.del <- more.del %>% select(dbGaP_Subject_ID,conception_natural,vdischarge,vitching,bv,birthcontrol,birthcontrol_type,ethnicity)
+
+write.table(selected.more.del,"~/microBio/MOMS-PI/relevant.metadata.all.samples.tsv",sep='\t', row.names = F, quote= F)
+
+del.merge<- merge(more.del,tab,by.x='dbGaP_Subject_ID',by.y='id',all.y=T)
+
+del.ess <-del.merge %>% select(dbGaP_Subject_ID,mom_delivery_method,ethnicity,conception_natural,vdischarge,vitching,bv,birthcontrol,birthcontrol_type,delivery,X1,X2,X3,X4,X5,mum_code)
+
+del.ess <- del.ess %>% mutate(delivery=coalesce(delivery,mom_delivery_method))
+del.ess$delivery <- str_replace(as.character(del.ess$delivery),'_delivery','')
+
+write.table(del.ess,"~/microBio/MOMS-PI/moms70.metadata.samples.tsv",sep='\t', row.names = F, quote= F)
+
+setdiff(unique(mgen.long$id),tab$id)
+length(unique(mgen.long$id))
+```
+
+## a bit of Tree code (changing tip_labels mostly)
+```{r}
+
+library(treeio)
+library(ggtree)
+library(ape)
+
+tab_long <- gather(tab,visit,sample,c(3:7))
+empty.ones <-c('SRR6745071','SRR6744774','SRR6744737','SRR6744618','SRR6744456','SRR6744406','SRR6744355','SRR6744197','SRR6744158','SRR6744111','SRR6744045')
+which(tab_long$sample %in% empty.ones ) == TRUE
+
+tree<-read.tree(file='~/microBio/MOMS-PI/strain_distmat/L_iners/1/RAxML_bestTree.s__Lactobacillus_iners.StrainPhlAn3.tre') 
+labels<- data.frame(tips = tree$tip.label)
+new.labels <- merge(tab_long,labels,by.x='sample',by.y='tips', all.y=T)
+new.labels$mum_code <- as.character(new.labels$mum_code)
+#new.labels$mum_code <- ifelse(is.na(new.labels$mum_code),stringr::str_split_fixed(new.labels$sample,3,'_')[,2],new.labels$mum_code)
+
+new.labels$gcf_alt <- ifelse(startsWith(new.labels$sample,'GCF') == T,str_split_fixed(stringr::str_replace(new.labels$sample,'GCF_000',''),n=2,'_')[,1],new.labels$mum_code)
+
+new.labels$strain_alt <- ifelse(startsWith(new.labels$sample,'L') == T, str_split_fixed(new.labels$sample,n=3,'_')[,3], new.labels$mum_code)
+
+new.labels$code <- ifelse(is.na(new.labels$mum_code) == T,ifelse(is.na(new.labels$gcf_alt) == T,new.labels$strain_alt,new.labels$gcf_alt),new.labels$mum_code)
+
+
+new.tab<-new.labels %>% select(sample,code)
+write.table(new.tab, file='1_metadata.txt',sep='\t', row.names = F, quote= F)
+
+tree <- rename_taxa(tree, new.labels, sample, mum_code)
+#write.tree(tree2)
+
+ggtree(tree1_2)+
+  theme_tree2()+
+  geom_tiplab(size=3, color="purple")
+ggsave('tree1.png',width= 20,height=10)
+
+scores <- read.delim('1_ord_scores.tsv', sep='\t')
+merge(scores,new.tab,by.x='sample',by.y='row.names',all.x=T)
+
+#install.packages("phangorn")
+library(phangorn)
+install.packages("phytools")
+library(phytools)
+
+
+RF.dist(tree1_2,tree2_2)
+
+D.12 <- as.data.frame(cophenetic(tree1_2))
+D.22 <- cophenetic(tree2_2)
+plot(D.12, D.22, xlab = "distances_tree1_2", ylab = "distances_tree2_2")
+cor(as.vector(D.12), as.vector(D.22))
+
+ggtree(tree2_2)+
+  theme_tree2()+
+  geom_tiplab(size=3, color="purple")
+ggsave('tree2.png',width= 20,height=10)
+
+```
+
+#script for strainphlan ordination plot
+```{r}
+library(vegan)
+library(treeio)
+library(ggtree)
+library(ape)
+library(ggrepel)
+
+#tree<-read.tree(file='L_iners/5/RAxML_bestTree.s__Lactobacillus_iners.StrainPhlAn3.tre')
+tree<-read.tree(file='~/microBio/MOMS-PI/strain_distmat/Kimura-2Pmodel/L_iners_visitByvisit/upto5.together/RAxML_bestTree.s__Lactobacillus_iners.StrainPhlAn3.tre')
+labels<- data.frame(tips = tree$tip.label)
+new.labels <- merge(tab_long,labels,by.x='sample',by.y='tips', all.y=T)
+new.labels$visit <- replace_na(str_replace(new.labels$visit,'X','-'),'')
+new.labels$mum_code <- as.character(new.labels$mum_code)
+new.labels$gcf_alt <- ifelse(startsWith(new.labels$sample,'GCF') == T,str_split_fixed(stringr::str_replace(new.labels$sample,'GCF_000',''),n=2,'_')[,1],new.labels$mum_code)
+
+new.labels$strain_alt <- ifelse(startsWith(new.labels$sample,'L') == T, str_split_fixed(new.labels$sample,n=3,'_')[,3], new.labels$mum_code)
+
+new.labels$code <- ifelse(is.na(new.labels$mum_code) == T,ifelse(is.na(new.labels$gcf_alt) == T,new.labels$strain_alt,new.labels$gcf_alt),new.labels$mum_code)
+
+new.labels$type <- ifelse(startsWith(new.labels$code,'m') == T, 'sample','reference')
+new.labels$mum_code_v <- str_replace(paste0(as.character(new.labels$code),new.labels$visit),'NA','')
+
+new.tab<-new.labels %>% select(sample,code,type,mum_code_v)
+# rename_taxa(tree, new.tab,sample,mum_code_v)
+write.table(new.tab, "~/microBio/MOMS-PI/upto.full.5visits.tsv", row.names = F, quote=F)
+
+markers <- read.delim("~/microBio/MOMS-PI/all_species_markers_snp_rate.tsv",sep='\t',header=1)
+markers$taxon <- str_split_fixed(markers$marker_name,"_",n =2)[,1]
+markers$mum <- str_split_fixed(markers$mum_code_v,"-",n =2)[,1]
+markers %>% arrange(desc(marker_snp_rate)) #%>% group_by(taxon)
+markers %>% filter(mum_code_v == 'mum_36-3') %>% arrange(desc(marker_snp_rate)) %>% filter(taxon == '147802')
+markers %>% filter(taxon == '147802') %>% arrange(desc(marker_snp_rate)) # L_iners
+
+```
+
+```{r}
+markers %>% filter(mum_code_v == 'mum_36-2') %>% arrange(desc(marker_snp_rate)) %>% filter(taxon == '147802')
+```
+
+
+
+my_colors = c(brew.pal(,'Pastel1'),brew.pal(,'Dark2'),jet(), polychrome()) # 59 mums, 179 tips, 359 nodes
+ggtree(tree, align=TRUE, linesize=.5) %<+% new.tab + #xlim(0, 0.06)+
+    geom_tiplab(aes(label=, color=))
+    geom_tippoint(color=)+
+    scale_color_manual()+
+    geom_taxalink('A', 'E') + 
+    geom_taxalink('F', 'K', color='brown', arrow=grid::arrow(length = grid::unit(0.02, "cm")))
+
+#script for strainphlan ordination plot
+```{r}
+#data <- read.table( '5_distance.distmat', skip = 8, fill = TRUE, sep="\t", strip.white = T)
+data <- read.table( '~/microBio/MOMS-PI/strain_distmat/Kimura-2Pmodel/L_iners_visitByvisit/upto5.together.distmat', skip = 8, fill = TRUE, sep="\t", strip.white = T)
+data[1] <- NULL
+header <- lapply(data[,ncol(data)], as.character)
+data[ncol(data)] <- NULL
+data[ncol(data)] <- NULL
+samples <- str_split_fixed(unlist(header),n=2, "\ ")[,1]
+rownames(data) <- samples
+colnames(data) <- samples
+# make symmetric, add lower triangle to upper triangle
+data[lower.tri(data)] <- t(data)[lower.tri(data)]
+# ordinate on the distance matrix
+e.sir.pcoa <- cmdscale( data, eig = T )
+# variance explained 
+variance <- head(eigenvals(e.sir.pcoa)/sum(eigenvals(e.sir.pcoa)))
+x_variance <- as.integer(variance[1]*100)
+y_variance <- as.integer(variance[2]*100)
+# get scores for plotting
+e.sir.scores <- as.data.frame( e.sir.pcoa$points )
+# read in metadata file
+e.sir.meta <- new.tab
+# append to e.sir.scores
+e.sir.scores.meta <- merge( e.sir.scores, e.sir.meta, by.x = 'row.names', by.y='sample' )
+# set first column as rownames and remove it
+rownames( e.sir.scores.meta ) <- e.sir.scores.meta[,1]
+e.sir.scores.meta[,1] <- NULL
+# change colnames
+colnames(e.sir.scores.meta) <- c( "PCo1", "PCo2", "SubjectID","type","SubjectID_v")
+ 
+ordered <- e.sir.scores.meta[order(e.sir.scores.meta$SubjectID_v),]
+
+ggplot(ordered, aes(x=PCo1, y=PCo2, label=SubjectID_v, group=SubjectID ,color=type) ) +
+  geom_point(size = 2, alpha = 0.5, show.legend = F) +
+  geom_text_repel(aes(fontface=0.5,vjust=-0.9,hjust=+0.1,size=0.5, fill='black'), show.legend = F) +
+  #scale_color_manual(values=c('red','black')) +
+  geom_path(aes(x=PCo1, y=PCo2, group = SubjectID), arrow = arrow(ends = "last", type = "open"), show.legend = F, inherit.aes = F) +
+  theme_classic() +
+  xlab(paste("PCo1 (",x_variance,"% variance explained)")) + 
+  ylab(paste("PCo2 (",y_variance,"% variance explained)")) 
+ggsave('together.png',width= 30,height=20, limitsize= FALSE)
+
+most_different <- c('mum_53','mum_6','mum_36','mum_7','mum_57')
+ordered %>% mutate(highlight=ifelse(SubjectID %in% most_different,'different','similar')) %>% 
+  ggplot(aes(x=PCo1, y=PCo2, label=SubjectID_v, group=SubjectID,color=highlight, alpha=highlight) ) + 
+  geom_point(size =2, show.legend = F) +
+  scale_color_manual(values = c("#2ed1d5", "lightgrey")) +
+  scale_alpha_manual(values = c(1, 0.5))+
+  geom_text_repel(aes(fontface=0.5,vjust=-0.9,hjust=+0.1,size=0.5), show.legend = F) +
+  #scale_color_manual(values=c('red','black')) +
+  geom_path(aes(x=PCo1, y=PCo2, group = SubjectID, color=highlight), arrow = arrow(ends = "last", type = "open"), show.legend = F, inherit.aes = F) +
+  #scale_size_manual(values=c(0.7,0.2))+
+  scale_color_manual(values=c('black','lightgrey'))+
+  theme_classic() +
+  xlab(paste("PCo1 (",x_variance,"% variance explained)")) + 
+  ylab(paste("PCo2 (",y_variance,"% variance explained)")) 
+ggsave('together-different.png',width= 30,height=20, limitsize= FALSE)
+
+
+```
+
+## transform dist.matrices in pairwise tables
+```{r}
+ethni <- read.delim('~/microBio/MOMS-PI/moms70.metadata.samples.tsv',sep='\t')
+ethni_long <- pivot_longer(ethni,c(11:15),names_to='visit',values_to="sample")
+ethni_long$mum_code_v <- paste0(ethni_long$mum_code,'_',str_replace(ethni_long$visit,'X','v'))
+big_long_dist_tab <-data.frame(pair=c(),name=c(),value=c(),mum=c(),species=c())
+sps <- c('Lactobacillus_iners','Lactobacillus_crispatus','Lactobacillus_jensenii','Lactobacillus_gasseri',"Gardnerella_vaginalis","Atopobium_vaginae","Lactobacillus_phage_Lv_1","Prevotella_timonensis","Prevotella_amnii")
+#sp <- 'Lactobacillus_paragasseri' #in no mums
+#sp <- 'Lactobacillus_crispatus'
+#sp <- 'Lactobacillus_jensenii'
+for (sp in sps){
+  file <- paste0('~/microBio/MOMS-PI/strain_distmat/',sp,'.upto5.together.distmat')
+  mat <- read.table(file=file, skip = 8, fill = TRUE, sep="\t", strip.white = T)
+  mat[1] <- NULL
+  header <- lapply(mat[,ncol(mat)], as.character)
+  mat[ncol(mat)] <- NULL
+  mat[ncol(mat)] <- NULL
+  samples <- str_split_fixed(unlist(header),n=2, "\ ")[,1]
+  rownames(mat) <- samples
+  colnames(mat) <- samples
+  mat[is.na(mat)] <- 0
+  #mat[lower.tri(mat)] <- t(mat)[lower.tri(mat)]
+  
+  norefs <- mat[-grep('L|G',rownames(mat)), -grep('L|G',colnames(mat))]
+  for (i in seq(1,ncol(norefs),1)){ 
+  id <- colnames(norefs)[i]
+  sub <-ethni_long[ethni_long$sample == id,]
+  sub.id <- as.character(sub$mum_code_v)
+  colnames(norefs)[i] <- sub.id }
+  
+  rownames(norefs) <- colnames(norefs)
+  norefs$pair <- rownames(norefs)
+  dist.pairs <-pivot_longer(norefs, 1:ncol(norefs)-1)
+  
+  dist.pairs
+  
+  dist.pairs$mum <- ifelse(paste0(str_split_fixed(dist.pairs$name,n=3,'_')[,1],str_split_fixed(dist.pairs$name,n=3,'_')[,2]) == paste0(str_split_fixed(dist.pairs$pair,n=3,'_')[,1],str_split_fixed(dist.pairs$pair,n=3,'_')[,2]), "within", "between")
+  
+  dist.pairs.no0 <- subset(dist.pairs,value > 0)
+  dist.pairs.no0$species <- sp
+  #unique(dist.pairs.no0$name) # 164
+  big_long_dist_tab <- rbind(big_long_dist_tab, dist.pairs.no0)
+}
+
+big_long_dist_tab  #10202 rows
+subset(big_long_dist_tab, mum=='within')
+write.table(big_long_dist_tab,file='~/microBio/MOMS-PI/strain_distmat/merged.dist.mats.tsv', row.names = T, quote=F, sep='\t') 
+
+```
+# MAP ethnicity data with distance values
+```{r}
+big_long_dist_tab<-read.delim('~/microBio/MOMS-PI/strain_distmat/merged.dist.mats.tsv', sep='\t')
+ethni <- read.delim('~/microBio/MOMS-PI/moms70.metadata.samples.tsv',sep='\t')
+
+for (i in seq(1,nrow(big_long_dist_tab),1)){ 
+  id <- big_long_dist_tab$name[i]
+  sub <-ethni_long[ethni_long$mum_code_v == id,]
+  sub.eth.name <- as.character(sub$ethnicity)
+  
+  id <- big_long_dist_tab$pair[i]
+  sub <-ethni_long[ethni_long$mum_code_v == id,]
+  sub.eth.pair <- as.character(sub$ethnicity)
+  big_long_dist_tab$ethni_name_pair[i] <- paste0(sub.eth.name,'--',sub.eth.pair)
+  }
+
+big_long_dist_tab
+
+write.table(big_long_dist_tab,file='~/microBio/MOMS-PI/strain_distmat/merged.dist.mats.ethni.tsv', row.names = T, quote=F, sep='\t')  
+```
+
+```{r}
+dist.ethni <-read.delim('~/microBio/MOMS-PI/strain_distmat/merged.dist.mats.ethni.tsv', sep='\t')
+dist.ethni.noNA <- dist.ethni[-grep('NA',dist.ethni$ethni_name_pair),]
+
+#ethni <- read.delim('~/microBio/MOMS-PI/moms70.metadata.samples.tsv',sep='\t')
+#subset(ethni,mum_code == 'mum_30')
+#is.na(ethni$ethnicity)
+
+dist.ethni.noNA$ethni_name_pair <- as.character(dist.ethni.noNA$ethni_name_pair)
+
+dist.ethni.noNA$ethni_name_pair_inter <- ifelse(str_split_fixed(as.character(dist.ethni.noNA$ethni_name_pair),n=2,'--')[,1] == str_split_fixed(as.character(dist.ethni.noNA$ethni_name_pair),n=2,'--')[,2],paste0('within_',str_split_fixed(as.character(dist.ethni.noNA$ethni_name_pair),n=2,'--')[,1]),'between_ethnicity') 
+
+dist.ethni.noNA$ethni_name_pair_inter <- as.character(dist.ethni.noNA$ethni_name_pair_inter)
+
+#dist.ethni.noNA<- subset(dist.ethni.noNA,ethni_name_pair_inter != 'between_ethnicity')
+
+n_data <- dist.ethni.noNA %>% group_by(species) %>% mutate(pos=max(value)+5) %>% select(species,ethni_name_pair_inter, pos) %>% group_by(species,ethni_name_pair_inter) %>% mutate(n=n()) 
+#lista <- list()
+for (i in unique(dist.ethni.noNA$species)){
+  sub <- subset(dist.ethni.noNA,species == i)
+  numbers <-subset(n_data,species == i)
+  lista[[i]] <- ggplot(data = sub,aes(x=ethni_name_pair_inter,y=value ,fill=ethni_name_pair_inter))+
+  geom_violin(alpha=0.70, show.legend = F)+
+  geom_text(data=numbers,aes(x=ethni_name_pair_inter,y=pos,label=n), check_overlap = T)+
+  stat_summary(fun = mean, geom = "point", shape = 2, size = 2, color = "black", show.legend = F)+
+  #scale_x_discrete(guide = guide_axis(n.dodge=1.8))+
+  theme_bw()+
+  labs('title'=i)}
+
+library(gridExtra)
+mygrob <- grid.arrange(grobs=lista, nrow=7)
+ggsave('ethnicity.distance.within.png',mygrob ,width = 25,height=20, limitsize=F)
+
+library(ggridges)
+library(pals)
+lista2 <- list()
+for (i in unique(dist.ethni.noNA$species)){
+  sub <- subset(dist.ethni.noNA,species == i)
+  numbers <-subset(n_data,species == i)
+  lista2[[i]] <- ggplot(sub, aes(x = value , y = ethni_name_pair_inter))+
+  geom_density_ridges(aes(fill=ethni_name_pair_inter),alpha = .5, jittered_points = TRUE, position ='raincloud', point_size = 1, point_alpha = .3, show.legend =F, quantile_lines = TRUE, quantiles = 0.5, panel_scaling=FALSE)+
+  #stat_density_ridges(quantile_lines = TRUE, quantiles = 0.5)+
+  scale_fill_manual(values=as.vector(alphabet(n=20)) )+
+  labs(title=i,y='',x='SNP distance Kimura 2-parameters model')
+} 
+
+mygrob2 <- grid.arrange(grobs=lista2, nrow=7)
+ggsave('ethnicity.distance.ridges.png',mygrob2 ,width = 25,height=20, limitsize=F) 
+```
+
+```{r}
+devtools::install_github("hrbrmstr/hrbrthemes")
+library(hrbrthemes)
+library(gcookbook)
+library(tidyverse)
+
+lista3 <- list()
+for (i in unique(dist.ethni.noNA$species)){
+  sub <- subset(dist.ethni.noNA,species == i)
+  numbers <-subset(n_data,species == i)
+  lista2[[i]] <- ggplot(sub, aes(x = value , y = ethni_name_pair_inter))+
+  geom_density_ridges(aes(fill=ethni_name_pair_inter),alpha = .5, jittered_points = TRUE, position ='raincloud', point_size = 1, point_alpha = .3, show.legend =F, quantile_lines = TRUE, quantiles = 0.5, panel_scaling=FALSE)+
+  #stat_density_ridges(quantile_lines = TRUE, quantiles = 0.5)+
+  scale_fill_manual(values=as.vector(alphabet(n=20)) )+
+  labs(title=i,y='',x='SNP distance Kimura 2-parameters model')
+} 
+
+mygrob3 <- grid.arrange(grobs=lista3, nrow=7)
+ggsave('ethnicity.halfviolin.png',mygrob3 ,width = 25,height=20, limitsize=F) 
+
+ggplot(sub, aes(x=value,y=ethni_name_pair_inter, fill=ethni_name_pair_inter)) +
+    geom_flat_violin(position = position_nudge(x = .2, y = 0)) +
+    coord_flip()+
+    geom_jitter(aes(color = ethni_name_pair_inter),width=0.15, alpha = 0.6)+
+  scale_fill_manual(values=as.vector(alphabet(n=20)) )+
+  theme_ipsum()
+labs(title=i,y='',x='SNP distance Kimura 2-parameters model')
+```
+
+## VIOLIN PLOT: finding if inter-individual differences is less than between individual differences
+```{r}
+data <- read.table( '~/microBio/MOMS-PI/strain_distmat/L_iners/upto5.together.distmat', skip = 8, fill = TRUE, sep="\t", strip.white = T)
+data[1] <- NULL
+header <- lapply(data[,ncol(data)], as.character)
+data[ncol(data)] <- NULL
+data[ncol(data)] <- NULL
+samples <- str_split_fixed(unlist(header),n=2, "\ ")[,1]
+rownames(data) <- samples
+colnames(data) <- samples
+data[lower.tri(data)] <- t(data)[lower.tri(data)]
+
+norefs <- data[-grep('L|G',rownames(data)), -grep('L|G',colnames(data))]
+
+
+for (i in seq(1,ncol(norefs),1) ){ 
+  id <- colnames(norefs)[i]
+  sub <-new.tab[new.tab$sample == id,]
+  sub.id <- sub$mum_code_v[1]
+  colnames(norefs)[i] <- sub.id }
+
+
+rownames(norefs) <- colnames(norefs)
+norefs$pair <- rownames(norefs)
+dist.pairs <-pivot_longer(norefs, 1:164)
+
+dist.pairs
+
+dist.pairs$mum <- ifelse(str_split_fixed(dist.pairs$name,n=2,'_')[,1] == str_split_fixed(dist.pairs$pair,n=2,'_')[,1], "within", "between")
+
+dist.pairs$mum <- ifelse(paste0('mum_',str_split_fixed(dist.pairs$name,n=3,'_')[,2]) == paste0('mum_',str_split_fixed(dist.pairs$pair,n=3,'_')[,2]), "within", "between")
+
+dist.pairs.no0 <- subset(dist.pairs,value > 0)
+unique(dist.pairs.no0$name) # 164
+
+ggplot(dist.pairs.no0,aes(x=mum,y=value,fill=mum, color=mum))+
+  geom_violin(alpha=0.70, show.legend = F)+
+  stat_summary(fun.y = mean, geom = "point", shape = 2, size = 2, color = "black", show.legend = F)+
+  stat_summary(fun.y = median, geom = "point", size = 2, color = "black", show.legend = F)+
+  scale_fill_manual(values=c('#257452','#433a70'))+
+  scale_color_manual(values=c('#257452','#433a70'))+
+  stat_compare_means(method='wilcox.test', show.legend = F)+
+  theme_bw()+
+  labs(x="Mum",y='SNP distance [Kimura 2-parameters model]')
+ggsave('SNPdistance.png',width= 9,height=7, limitsize= FALSE)
+```
+
+DEFINE avg distance per mother --> what's happening when it changes a lot? phages?
+```{r}
+dist.ethni <-read.delim('~/microBio/MOMS-PI/strain_distmat/merged.dist.mats.ethni.tsv', sep='\t')
+within <- subset(dist.ethni,mum =='within')
+within$name_v <- as.numeric(str_replace(str_split_fixed(within$name,n=3,'_')[,3],'v',''))
+within$pair_v <- as.numeric(str_replace(str_split_fixed(within$pair,n=3,'_')[,3],'v',''))
+
+within.subseq <- subset(within, pair_v == name_v+1)
+within.subseq$mum_code <- paste0('mum_',str_split_fixed(within.subseq$name,n=3,'_')[,2])
+mean.dist <- within.subseq %>% group_by(mum_code) %>% mutate(avg_dist=mean(value))
+mean.dist$diff_avg <- mean.dist$avg_dist - mean.dist$value
+mean.dist <- mean.dist %>% arrange(desc(mum_code))
+
+subset(mean.dist,mum_code == 'mum_70')
+
+mean(mean.dist$diff_avg)
+length(unique(some.diff$mum_code))
+
+some.diff <- subset(mean.dist, diff_avg != 0)
+
+ethnies <- c("african_american","american_indian_or_alaska_native",'asia','caucasian','hispanic_or_latino','not_known')
+
+ggplot(some.diff,aes(x=diff_avg,y=mum_code, color=ethni_name_pair))+
+  geom_point(size=2, alpha=0.5)+
+  geom_text_repel(aes(x=diff_avg,y=mum_code,label=species),min.segment.length = 0.1)+
+  geom_vline(xintercept = 0, color = "red", size=0.1)+
+  labs(x="Avg Mum SNP distance - Sample specific SNP distance to the subsequent sample")+
+  xlim(-10,7)#+
+  #scale_color_manual(labels=c("african_american","american_indian_or_alaska_native",'asia','caucasian','hispanic_or_latino','not_known'))
+ggsave('avg.distance.difference.png',width= 15,height=15, limitsize= FALSE)
+
+
+
+```
+
+# for organizing Strainphlan runs: I created a table with sample names from the cluster
+```{r}
+pivoted.visits <- read.delim(file='pivoted.visits.tsv',sep='\t')
+
+
+subset(pivoted.visits,X3=='SRR6745071') 
+subset(pivoted.visits,X5=='SRR6744774')
+
+pivoted.visits 
+full.info<- pivoted.visits %>% drop_na()
+
+full.dataset<- c()
+for (i in seq(3,13,1)){
+  
+  #print(i)}
+  cumul <- pivoted.visits[1:i] %>% drop_na() %>% nrow()
+  full.dataset<- c(full.dataset,cumul)
+}
+full.dataset
+full.record <- data.frame(full.dataset, full.visits.record = colnames(pivoted.visits[,3:13]))
+```
+
+# OVERVIEW PLOT: which mums have full record?
+```{r}
+full.record$full.visits.record <- as.factor(str_replace(full.record$full.visits.record,'X','1->'))
+full.record <- full.record %>% mutate(full.visits.record = forcats::fct_relevel(full.visits.record,"1->2", "1->3","1->4","1->5","1->6","1->7","1->8","1->9","1->10","1->11","1->12"))
+
+df <- mgen.long %>% select(sample, visit.factor) %>% unique() %>% mutate(visit.factor = forcats::fct_relevel(visit.factor, "1", "2", "3","4","5","6","7","8","9","10","11","12"))
+ggplot(df, aes(x=visit.factor, fill=visit.factor))+
+  geom_bar(show.legend = F)+
+  geom_text(stat='count', aes(label=..count..), vjust=-0.5, size=7)+
+  theme(legend.position='right')+theme_bw()+
+  labs(x="Visit number", y='N° of samples', title='MOMS-PI Cohort')
+ggsave('n.of.samples.png',width= 10,height=10)
+
+ggplot(data=full.record,aes(x=full.visits.record,y=full.dataset))+
+  geom_bar(stat='identity')+
+  geom_text(aes(label=full.dataset), vjust=-0.5, size=7)+
+  labs(x='All samples up to visit',y='N° of mothers')
+ggsave('n.of.full.uninterrupted.records.png',width= 7,height=9)  
+
+```
+
+```{r}
+upto5 <- pivoted.visits[1:6] %>% drop_na()
+write.table(upto5,file='upto.full.5visits.tsv',sep='\t',row.names=F)
+
+```
+
+
+```{r}
+
+prevdf <- data.frame(prevalence=rowSums(mgen.vag[,1:ncol(mgen.vag)-1]>0)) #count row in colums = sum of columns
+# APPROACH WITHOUT HEURISTICS ## not sure this will not skew results, it's safer taking a conservative threshold
+prevalenceThreshold <- 0.1 * ncol(mgen.vag[,1:ncol(mgen.vag)-1]) #5% prevalence in our dataset is 5 samples 
+prevalenceThreshold
+keepTaxa <- rownames(mgen.vag[,1:ncol(mgen.vag)-1])[(prevdf$prevalence >= prevalenceThreshold)]
+## do the filtering on prevalence
+prevalence.proof <- mgen.vag[,1:ncol(mgen.vag)-1][rownames(mgen.vag[,1:ncol(mgen.vag)-1]) %in% keepTaxa,]
+more.prevalent <- rownames(prevalence.proof) #26 species
+more.prev.df <- subset(mgen.long, taxon %in% more.prevalent)
+more.prev.df$species <- as.factor(more.prev.df$species)
+more.prev.df$genus <- as.factor(more.prev.df$genus)
+more.prev.df$sample <- as.factor(more.prev.df$sample)
+more.prev.df$visit <-as.factor(more.prev.df$visit)
+
+## do the filtering on abundance
+stat <- mgen.long %>% group_by(taxon) %>% summarise(mean=mean(abundance)) %>% arrange(desc(mean)) #26 species
+more.abundant <- stat$taxon[c(1:26)]
+more.ab.df <- subset(mgen.long, taxon %in% more.abundant)
+more.ab.df$species <- as.factor(more.ab.df$species)
+more.ab.df$genus <- as.factor(more.ab.df$genus)
+more.ab.df$sample <- as.factor(more.ab.df$sample)
+more.ab.df$visit <-as.factor(more.ab.df$visit)
+
+#more.prev.df <- more.prev.df %>% group_by(species,visit) %>% mutate(count=n())
+
+#stat <- more.prev.df %>% group_by(species,visit) %>% filter(abundance>0)  %>% summarise(count=n())
+#mean(log10(abundance)),sd(log10(abundance)), se = sd / sqrt(count)) 
+
+more.0 <- subset(more.prev.df, abundance > 0 & visit != '6' & visit != '7' & visit != '8' & visit != '9' &visit != '10'& visit != '11' & visit != '12')
+```
+
+```{r}
+library(forcats)
+library(gridExtra)
+
+sixvisits <- subset(mgen.long, abundance > 0.1 & visit != '7' & visit != '8' & visit != '9' &visit != '10'& visit != '11' & visit != '12')
+sixvisits <- sixvisits %>% group_by(visit.factor) %>% mutate(women=n_distinct(id))
+only.counts <- sixvisits %>% select(visit.factor, women) %>% distinct()
+df <- sixvisits %>%  group_by(visit.factor) %>% count(taxon) %>% filter(n > 3) %>%  arrange(visit.factor, desc(n))
+#only.counts$visit.factor <- as.character(only.counts$visit.factor)
+#df$visit.factor <- as.character(df$visit.factor)
+n.df <- merge(df,only.counts, by='visit.factor' ,all.x=T)
+n.df$taxon <- as.factor(n.df$taxon)
+
+lista <- list()
+for (i in unique(n.df$visit.factor)){
+  sub <- subset(n.df,visit.factor == i)
+  lista[[i]] <- ggplot(sub,aes(x=reorder(taxon, -n),y=n ,fill=taxon))+
+  geom_bar(stat='identity',show.legend = F)+
+  geom_text(aes(label=paste0(round((n/women)*100, 1),'%')),hjust=1 ,vjust=1, size=2)+
+  theme(legend.position='right')+theme_bw()+coord_flip()+
+  labs(x=paste0("Detectable taxa (>0.1% rel abn) at the ",sub$visit.factor,'° visit'), y='N° of samples')+
+         theme(axis.text.y =  element_text(size=10))
+  }
+
+mygrob <- grid.arrange(grobs=lista, nrow=6)
+ggsave('final.visit.species.prevalence.pdf',mygrob ,width = 10,height=80, limitsize=F)
+#ggarrange(p[1],p[2],ncol=2)
+
+ggplot(df,aes(x=taxon,y=n ,fill=taxon))+
+  geom_bar(stat='identity',show.legend = F, position=position_dodge())+
+  facet_wrap(~visit.factor, scales='free_y',ncol=1)+
+  aes(x = fct_reorder(taxon,n,.desc = F))+
+  geom_text(aes(label=n),hjust=1 ,vjust=1, size=7)+
+  theme(legend.position='right')+theme_bw()+coord_flip()+
+  #facet_wrap(~visit.factor, scales='free_y',ncol=1)+
+  #arrange(df,taxon, desc(n))+
+  #aes(x = fct_reorder(n, .desc = F))+
+  labs(x="Visit number", y='N° of samples')+theme(axis.text.y =  element_text(size=14))
+ggsave('species.frequency.visit.ordered.pdf', width = 40,height=120, limitsize=F)
+
+n.df$prevalence <- n.df$n / n.df$women
+```
+# WILCOXON TESTS: testing difference between abundances over visits for each most prevalent taxon
+```{r}
+library(rstatix)
+subset(n.df,taxon == 'Peptoniphilus_harei')
+prev.proof <- subset(n.df, prevalence >= 0.05)
+prev.taxa <-unique(prev.proof$taxon) #52 species
+sixvisits 
+lista2 <- list()
+j <- 1
+i <- 'Lactobacillus_iners'
+my_comparisons <- list( c("1", "2"), c("2", "3"), c("3", "4"), c("4","5"), c("5","6") )
+
+all.wilcox <- c()
+for (j in seq(1,length(prev.taxa),1)){
+  sp <- prev.taxa[j]
+  sub <- subset(sixvisits,taxon == sp)
+  #lista2[[j]]
+  res <- pairwise.wilcox.test(sub$abundance, sub$visit.factor, p.adjust.method = "BH")
+  tab <-data.frame(res$p.value)
+  tab$species <- paste0(as.character(sp),'_v',seq(2,6,1))
+  all.wilcox <- rbind(all.wilcox,tab)}
+all.wilcox
+  
+for (j in seq(1,length(prev.taxa),1)){
+  sp <- prev.taxa[j]
+  sub <- subset(sixvisits,taxon == sp)
+  lista2[[j]] <-ggboxplot(sub, title=sp, x='visit.factor',y='abundance', fill='visit.factor', alpha=0.8)+
+  geom_point(aes(fill=visit.factor),position=position_jitterdodge(),show.legend = F)+
+  stat_compare_means(comparisons = my_comparisons,label = "p.signif")+
+  theme(legend.position='top')+
+  labs(x='Visit N°', y='Relative Abundance')
+  }
+
+mygrob2 <- grid.arrange(grobs=lista2, nrow=7)
+ggsave('subsequent.abundance.differences.pdf',mygrob2 ,width = 100,height=100, limitsize=F)
+
+##### out of the loo, only significant species
+sub <- subset(sixvisits,taxon == "Peptoniphilus_harei")
+ggboxplot(sub, title=sp, x='visit.factor',y='abundance', fill='visit.factor', alpha=0.8)+
+  geom_point(aes(fill=visit.factor),position=position_jitterdodge(),show.legend = F)+
+  stat_compare_means(comparisons = my_comparisons,label = "p.signif",method ='wilcox.test')+
+  theme(legend.position='top')+
+  labs(x='Visit N°', y='Peptoniphilus_harei relative Abundance [%]',title = "Peptoniphilus_harei")
+
+```
+
+# heatmap 
+```{r}
+#library(corrplot)
+#corrplot(all.wilcox[c(1:5),c(1:5)], method='color')
+colnames(all.wilcox)<-str_replace(colnames(all.wilcox),'X','v')
+rownames(all.wilcox)<-all.wilcox$species
+all.wilcox$species <- NULL
+library(pheatmap)
+png("subsequent.differences.png",width = 400,height = 800)
+pheatmap(as.matrix(all.wilcox),cellheight = 8,cellwidth = 8,fontsize_row=7,fontsize_col=7 ,border_color=TRUE,cluster_rows= FALSE,cluster_cols= FALSE,legend_labels = c("0","0.1","0.2","0.3","0.4",0.5,"0.6","0.7","0.8","0.9","1","p-adjusted value\n") )
+dev.off()
+#annotation_col=annotation_c,annotation_row= annotation_r,annotation_colors = list('delivery' = c('C-section' ="orangered1", 'Vaginal'="seagreen3"), 'transmission.event'=c('YES'='black','NO'='grey60'),'transmitted.species'=c('YES'='black','NO'='grey') )
+```
+
+
+
+```{r}
+#five.visits <- subset(mgen.long,  & visit != '7' & visit != '8' & visit != '9' &visit != '10'& visit != '11' & visit != '12')
+five.visits <- mgen.long %>% group_by(id) %>% filter(abundance > 0.1) %>% mutate(nvisits=n_distinct(visit)) %>% filter(nvisits == '5' )
+#a woman having X2442649 8 visits
+
+
+#five.visits %>%  filter(id =='X2442777')
+#mutate(qc.one.ch.and.one.mo= (moch == 'Ch_Stool' & n.week.type >= 1) | (moch == 'Mo' &  n.week.type >= 1))
+#df$c <- with(df, ifelse(a==b, a+b, b-a))
+#mutate(c = if_else(a == b, a + b, b - a))
+
+
+mgen.long %>% group_by(id,taxon) %>% filter(visit <= 2 & id == 'X2443054') arrange(across(visit)) %>% mutate(one2sec = case_when( select(abundance) %>% top_n(1) > select(abundance) %>% top_n(-1) ~ asc, select(abundance) %>% top_n(1) < select(abundance) %>% top_n(-1)) ~ desc )
+
+```
+
+# GGRIDGES: density plots per more prevalent species and lactobacillus species
+```{r}
+library(ggridges)
+library(pals)
+#more.prev.df$visit2 <- as.factor(more.prev.df$visit2)
+prova <-subset(more.prev.df, genus != 'Ureaplasma' & genus != 'Leptotrichia' & genus != 'Mageeibacillus' & genus != 'Trichomonas' & genus != 'Sneathia')
+
+more.0 <- subset(more.prev.df, abundance > 0 & visit != '8' & visit != '9' &visit != '10'& visit != '11' & visit != '12')
+
+#subset(more.0, visit == 7)
+
+for (i in unique(more.0$visit)){
+  df <- subset(more.0, visit == i)
+  ggplot(df, aes(x =abundance , y = genus))+
+    geom_density_ridges(aes(fill=genus),alpha = .5, jittered_points = TRUE, position ='raincloud' , #position_points_jitter(width = 0.05, height = 0), point_shape = '|'
+    point_size = 1, point_alpha = .5) +
+    scale_fill_manual(values=as.vector(alphabet(n=20)) )+
+  ggsave(paste(i,'.density.up.down.pdf'),width =15,height = 17, limitsize = FALSE) } 
+  
+lacto <-subset(more.0, genus =='Lactobacillus') 
+ggplot(lacto, aes(x =abundance , y = visit))+
+    geom_density_ridges(aes(fill=species),alpha = .5) +
+    scale_fill_brewer(palette = 'Paired')+#aes(fill = species, group=species),alpha = .8
+ggsave('lacto.density.up.down.pdf', width =15, height = 20, limitsize = FALSE)
+
+for (i in more.prevalent){
+  df <- subset(more.0, taxon == i)
+  ggplot(df, aes(x =abundance , y = visit))+
+    geom_density_ridges(alpha = .5, jittered_points = TRUE, position = 'raincloud', point_size = 1, point_alpha = 0.5)+
+    #scale_fill_brewer(palette = 'rainbow')+#aes(fill = species, group=species),alpha = .8
+    labs(title=i)+
+  ggsave(paste('./species/',i,'.density.up.down.pdf'),width =15,height = 10, limitsize = FALSE) } 
+  
+```
+# computation of gini index and plot distribution
+```{r}
+library(diverse)
+library(vegan)
+mat <-mgen.vag[,1:ncol(mgen.vag)-1]
+#mat$
+dist.m<-vegdist(t(mat), method='bray')
+dim(dist.m) #926x926
+#simp.indx <- diverse::diversity(data=t(mat), type= "gini", dis=dist.m, category_row = F)
+#dim(simp.indx)
+
+
+#data(pantheon)
+#diverse::diversity(pantheon)
+for.div <- mgen.long %>% select(sample,taxon,abundance)
+all.div.can <- diverse::diversity(for.div,method = "Canberra")
+all.div.eu <- diverse::diversity(for.div,method = "Euclidean")
+prof.div<- merge(all.div.can, mgen.long,by.x="row.names",by.y='sample')
+
+ggplot(prof.div, aes(x = visit , y = entropy))+
+  geom_jitter(width = 0.3)+
+  #geom_line()+
+  geom_smooth(method='gam')+
+  scale_x_continuous(breaks = c(1,2,3,4,5,6,7,8,9,10,11,12))+
+  
+  labs(x = "Visit (N°)", y = "Alpha diversity (Gini-Simpson index)")
+```
+
+# OVERALL PICTURE! with points and paired lines
+```{r}
+ggpaired(more.0, x = "visit", y = "abundance",id='id',fill_palette(palette="grey"),
+         line.color = "visit", point.size = 0.5,line.size = 0.6, alpha=0.6 )+
+  scale_y_log10()+
+    facet_wrap(~genus, scales="free", ncol=1)+ 
+  #stat_compare_means(aes(group=visit),paired = TRUE)+
+    theme(axis.text.x.bottom = element_text(angle=60))+
+    #geom_text(data=stat,aes(x = visit, y = 0.01, group=species,label = count),size=4)+
+    labs(y='Log10(relative abundance)',x='Visit N°')
+ggsave('species.up.down.paired.prevalent.log.pdf',width =10,height = 90, limitsize = FALSE)
+
+ggplot(more.prev.df,aes(x = visit, y = abundance, color=visit))+
+  geom_point(aes(group=id))+
+  #geom_errorbar(ymin=,ymax=,width = .1)+
+  scale_y_log10()+
+  facet_wrap(~species, scales="free")+ 
+  #stat_compare_means(aes(x = visit, y = abundance),paired = TRUE)+
+  theme(axis.text.x = element_text(angle=60))#+
+  #geom_text(aes(x = visit, y = log10(abundance) + 0.05, label = count))
+ggsave('species.up.down.lines.pdf',width =20,height = 20)
+
+more.prev.df <- more.prev.df %>% mutate(visit2=as.Date(sprintf("%d-01-01", visit)))
+#devtools::install_github("hrbrmstr/streamgraph")
+library(streamgraph)
+streamgraph(more.prev.df, key="species", value="abundance", date="visit2", height="200px", width="700px",offse='zero') 
+
+```
+
+##### TABLE per Nadav
+- to take 70 mums from visit 5?
+- to take lower number (visit 7) but it's later in time?
+
+```{r}
+who <- read.delim('~/microBio/MOMS-PI/subject.delivery.pivoted.70samples.tsv', sep='\t')
+table(who$delivery)
+what <- read.delim('~/microBio/MOMS-PI/mgenomics/metagenomics.vag.samples.visit.tsv', sep='\t')
+
+unique(str_split_fixed(colnames(strep), '_', n=2 )[,1] )
+
+mums.5 <- paste0(as.character(who$id), '_Visit_5')
+only.mums.5 <- what[,which(colnames(what) %in% mums.5)]
+ids.mums.5 <- str_split_fixed(colnames(only.mums.5), '_',n=2 )[,1]
+
+new_colnames <- c()
+i<- "X2442981"
+for (i in ids.mums.5){
+ replacement  <- who[which(who$id == i),]$mum_code
+ new_colnames <- c(new_colnames,as.character(replacement))
+}
+#subset(who,id == "X2442981")
+new_new_colnames <- paste0(new_colnames, '_Visit_5')
+colnames(only.mums.5) <- new_new_colnames
+```
+
